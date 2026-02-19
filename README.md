@@ -1,36 +1,150 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AR Store Navigator — MVP
 
-## Getting Started
+Browser-based AR navigation for retail stores using WebXR. Select a store section, point your phone, and follow 3D arrows to your destination.
 
-First, run the development server:
+Built with **Next.js 15** • **TypeScript** • **TailwindCSS v4** • **Three.js** • **WebXR API** • **Supabase** • **Framer Motion**
+
+---
+
+## Quick Start
+
+### 1. Install Dependencies
+
+```bash
+npm install
+```
+
+### 2. Set Up Supabase (Optional)
+
+The app works without Supabase using fallback data. To enable the database:
+
+1. Create a Supabase project at [supabase.com](https://supabase.com)
+2. Run the SQL from `supabase-schema.sql` in the SQL Editor
+3. Copy `.env.local.example` to `.env.local` and fill in your credentials:
+
+```bash
+cp .env.local.example .env.local
+```
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+```
+
+### 3. Run Locally
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 4. Run with HTTPS (Required for WebXR)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+WebXR requires HTTPS. Next.js has built-in experimental HTTPS support:
 
-## Learn More
+```bash
+npx next dev --experimental-https
+```
 
-To learn more about Next.js, take a look at the following resources:
+Accept the self-signed certificate warning in your browser.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+---
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Testing on Android Chrome
 
-## Deploy on Vercel
+### Prerequisites
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- ARCore-compatible Android device
+- Chrome 81+ installed
+- Device and computer on the same Wi-Fi network
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Steps
+
+1. **Deploy to Vercel** (easiest) — see below
+2. Open the Vercel URL on your Android Chrome
+3. Select a store section from the dropdown
+4. Tap **"Start AR Navigation"**
+5. Accept camera permission
+6. Point your phone at the floor — a cyan arrow appears pointing toward your destination
+7. Walk around — the arrow updates direction in real-time
+
+### WebXR Chrome Flags (if needed)
+
+If AR doesn't start, enable these flags in `chrome://flags`:
+
+- `#webxr-incubations` → Enabled
+- `#webxr-ar-module` → Enabled (if available)
+
+Restart Chrome after changing flags.
+
+---
+
+## Deploy to Vercel
+
+```bash
+npm i -g vercel
+vercel
+```
+
+Or push to GitHub and import on [vercel.com/new](https://vercel.com/new).
+
+> **Env vars**: Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in Vercel dashboard → Settings → Environment Variables.
+
+---
+
+## Project Structure
+
+```
+src/
+├── app/
+│   ├── layout.tsx          # Root layout (dark mode, fonts, SEO)
+│   ├── page.tsx            # Landing page
+│   ├── globals.css         # Global styles (glassmorphism, neon glow)
+│   └── ar/
+│       └── page.tsx        # AR navigation page
+├── ar/
+│   ├── ARScene.ts          # Three.js + WebXR engine
+│   └── ArrowModel.ts       # Procedural 3D arrow model
+├── components/
+│   ├── HeroSection.tsx     # Animated hero
+│   ├── SectionSelector.tsx # Destination dropdown
+│   ├── StartButton.tsx     # CTA button
+│   ├── FeatureCards.tsx     # Feature grid
+│   └── ErrorOverlay.tsx    # Error/loading states
+├── lib/
+│   ├── supabase.ts         # Supabase client
+│   └── sections.ts         # Section data fetching
+└── utils/
+    ├── device.ts           # Device detection
+    └── navigation.ts       # Direction math
+```
+
+---
+
+## Store Sections (Default)
+
+| Section     | X (meters) | Z (meters) |
+|------------|-----------|-----------|
+| Billing     | 0         | 8         |
+| Electronics | 6         | 4         |
+| Groceries   | -5        | 6         |
+| Clothing    | 4         | -3        |
+
+Entrance is at (0, 0). Coordinates are relative to the entrance.
+
+---
+
+## Tech
+
+- **WebXR `immersive-ar`** with `local-floor` reference space
+- **Three.js** for 3D rendering (procedural arrow, no external models)
+- **Vector math** for direction calculation (`atan2`)
+- Arrow repositions 2m ahead of camera each frame, rotated toward target
+- Neon cyan arrow with emissive glow + floating animation
+
+---
+
+## License
+
+MIT
