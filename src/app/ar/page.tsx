@@ -4,23 +4,32 @@ import { useEffect, useRef, useState, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ARScene } from '../../ar/ARScene';
+import { FallbackARScene } from '../../ar/FallbackARScene';
 import { fetchSections, getSectionById, Section } from '../../lib/sections';
-import { isWebXRSupported, isMobile } from '../../utils/device';
+import { detectARSupport, ARSupportInfo } from '../../utils/detectARSupport';
 import { formatDistance } from '../../utils/navigation';
 import ErrorOverlay from '../../components/ErrorOverlay';
+
+type ARStatus =
+    | 'loading'
+    | 'running'
+    | 'error'
+    | 'unsupported'
+    | 'permission'
+    | 'desktop'
+    | 'motion-permission';
 
 function ARPageContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const containerRef = useRef<HTMLDivElement>(null);
-    const arSceneRef = useRef<ARScene | null>(null);
+    const arSceneRef = useRef<ARScene | FallbackARScene | null>(null);
 
-    const [status, setStatus] = useState<
-        'loading' | 'running' | 'error' | 'unsupported' | 'permission' | 'desktop'
-    >('loading');
+    const [status, setStatus] = useState<ARStatus>('loading');
     const [errorMessage, setErrorMessage] = useState('');
     const [distance, setDistance] = useState<number | null>(null);
     const [targetSection, setTargetSection] = useState<Section | null>(null);
+    const [arMode, setArMode] = useState<'webxr' | 'fallback' | null>(null);
 
     const sectionId = searchParams.get('section');
 
@@ -40,35 +49,43 @@ function ARPageContent() {
         async (section: Section) => {
             if (!containerRef.current) return;
 
-            // Check device
-            if (!isMobile()) {
+            setStatus('loading');
+
+            // Detect AR capabilities
+            let support: ARSupportInfo;
+            try {
+                support = await detectARSupport();
+            } catch {
+                support = {
+                    immersiveAR: false,
+                    inlineAR: false,
+                    isiOS: false,
+                    isAndroid: false,
+                    isMobile: false,
+                    fallbackRequired: true,
+                };
+            }
+
+            // Desktop — no AR possible
+            if (!support.isMobile) {
                 setStatus('desktop');
                 return;
             }
 
-            // Check WebXR
-            const supported = await isWebXRSupported();
-            if (!supported) {
-                setStatus('unsupported');
-                return;
-            }
-
-            setStatus('loading');
-
             // Clean up previous instance
             if (arSceneRef.current) {
                 await arSceneRef.current.dispose();
+                arSceneRef.current = null;
             }
 
-            // Create AR scene
-            const arScene = new ARScene(containerRef.current, {
+            const sceneConfig = {
                 targetX: section.x,
                 targetZ: section.z,
                 onSessionEnd: () => {
                     setStatus('loading');
                     handleBack();
                 },
-                onError: (msg) => {
+                onError: (msg: string) => {
                     if (msg.includes('permission') || msg.includes('Permission')) {
                         setStatus('permission');
                     } else {
@@ -76,20 +93,48 @@ function ARPageContent() {
                     }
                     setErrorMessage(msg);
                 },
-                onDistanceUpdate: (d) => {
+                onDistanceUpdate: (d: number) => {
                     setDistance(d);
                 },
-            });
+            };
 
-            arSceneRef.current = arScene;
+            // Path A: WebXR immersive-ar (Android Chrome)
+            if (support.immersiveAR) {
+                setArMode('webxr');
+                const arScene = new ARScene(containerRef.current, sceneConfig);
+                arSceneRef.current = arScene;
 
-            try {
-                await arScene.start();
-                setStatus('running');
-            } catch {
-                setStatus('error');
-                setErrorMessage('Failed to start AR session.');
+                try {
+                    await arScene.start();
+                    setStatus('running');
+                } catch {
+                    setStatus('error');
+                    setErrorMessage('Failed to start AR session.');
+                }
+                return;
             }
+
+            // Path B: Camera fallback (iOS Safari, other mobile browsers)
+            if (support.fallbackRequired) {
+                setArMode('fallback');
+                const fallbackScene = new FallbackARScene(
+                    containerRef.current,
+                    sceneConfig
+                );
+                arSceneRef.current = fallbackScene;
+
+                try {
+                    await fallbackScene.start();
+                    setStatus('running');
+                } catch {
+                    setStatus('error');
+                    setErrorMessage('Failed to start AR experience.');
+                }
+                return;
+            }
+
+            // Neither path available
+            setStatus('unsupported');
         },
         [handleBack]
     );
@@ -123,8 +168,8 @@ function ARPageContent() {
 
     return (
         <div className="fixed inset-0 bg-black">
-            {/* Three.js canvas container */}
-            <div ref={containerRef} className="w-full h-full" />
+            {/* Three.js canvas container (+ video element for fallback) */}
+            <div ref={containerRef} className="w-full h-full relative" />
 
             {/* AR Overlay UI */}
             <AnimatePresence>
@@ -142,6 +187,11 @@ function ARPageContent() {
                                 <p className="text-sm font-semibold text-white">
                                     {targetSection.name}
                                 </p>
+                                {arMode === 'fallback' && (
+                                    <p className="text-[10px] text-[var(--accent)]/60 mt-0.5">
+                                        Camera AR Mode
+                                    </p>
+                                )}
                             </div>
                             <button
                                 onClick={handleExit}
@@ -162,7 +212,7 @@ function ARPageContent() {
                                     {formatDistance(distance)}
                                 </p>
                                 <p className="text-xs text-white/40 mt-1">
-                                    Follow the arrow on the floor
+                                    Follow the arrow
                                 </p>
                             </motion.div>
                         )}
@@ -196,6 +246,13 @@ function ARPageContent() {
                 )}
                 {status === 'desktop' && (
                     <ErrorOverlay type="desktop" onBack={handleBack} />
+                )}
+                {status === 'motion-permission' && (
+                    <ErrorOverlay
+                        type="motion-permission"
+                        onBack={handleBack}
+                        onRetry={() => targetSection && initAR(targetSection)}
+                    />
                 )}
             </AnimatePresence>
         </div>

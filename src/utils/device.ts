@@ -4,9 +4,24 @@
 
 export function isMobile(): boolean {
     if (typeof window === 'undefined') return false;
-    return /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(
-        navigator.userAgent
+    return (
+        /Android|iPhone|iPad|iPod|webOS|BlackBerry|IEMobile|Opera Mini/i.test(
+            navigator.userAgent
+        ) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
     );
+}
+
+export function isiOS(): boolean {
+    if (typeof navigator === 'undefined') return false;
+    return (
+        /iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    );
+}
+
+export function isAndroid(): boolean {
+    if (typeof navigator === 'undefined') return false;
+    return /Android/i.test(navigator.userAgent);
 }
 
 export async function isWebXRSupported(): Promise<boolean> {
