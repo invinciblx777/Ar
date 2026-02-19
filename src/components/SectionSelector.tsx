@@ -91,7 +91,7 @@ export default function SectionSelector({
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -8, scale: 0.96 }}
                         transition={{ duration: 0.2 }}
-                        className="absolute top-full left-0 right-0 mt-2 glass-card overflow-hidden z-50"
+                        className="absolute top-full left-0 right-0 mt-2 glass-card overflow-hidden z-50 max-h-60 overflow-y-auto"
                     >
                         {sections.map((section) => (
                             <button
@@ -106,9 +106,9 @@ export default function SectionSelector({
                                         : 'text-white/70'
                                     }`}
                             >
-                                <span>{section.name}</span>
-                                <span className="text-xs text-white/20">
-                                    ({section.x}m, {section.z}m)
+                                <span className="flex items-center gap-2">
+                                    {section.icon && <span>{section.icon}</span>}
+                                    {section.name}
                                 </span>
                             </button>
                         ))}

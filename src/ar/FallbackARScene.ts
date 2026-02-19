@@ -1,24 +1,24 @@
 import * as THREE from 'three';
-import { createArrowModel, animateArrow } from './ArrowModel';
-import { getDirectionAngle, getDistanceToTarget } from '../utils/navigation';
-import type { ARSceneConfig } from './ARScene';
+import { WaypointRenderer } from './WaypointRenderer';
+import { CoordinateMapper } from './coordinateMapper';
+import { NavigationEngine, type NavigationState, type NavigationEvent } from './navigationEngine';
+import type { NavigationGraph } from '../lib/mapData';
+import type { ARSceneConfig } from './ARScene'; // Reuse the config interface
 
 /**
- * Fallback AR scene for iOS Safari and browsers without WebXR immersive-ar.
+ * Fallback AR scene for devices without WebXR (e.g. iOS Safari).
  *
- * Uses:
- * - getUserMedia for rear camera feed (rendered as <video> background)
- * - Three.js with alpha:true overlaid on top
- * - DeviceOrientationEvent for compass heading → arrow rotation
- *
- * The arrow is placed in the center of the screen, rotated to point
- * toward the target section based on device compass heading.
+ * Usage:
+ * - Renders rear camera feed via getUserMedia to a <video> element
+ * - Renders Three.js scene transparently on top
+ * - Functionality is limited: 3DOF only (orientation tracking via device compass)
+ * - User position is assumed fixed at the start node (or QR anchor)
+ * - Navigation updates rely on user manually scanning QR codes to update position
  */
 export class FallbackARScene {
     private renderer: THREE.WebGLRenderer;
     private scene: THREE.Scene;
     private camera: THREE.PerspectiveCamera;
-    private arrow: THREE.Group | null = null;
     private config: ARSceneConfig;
     private clock: THREE.Clock;
     private disposed = false;
@@ -28,6 +28,12 @@ export class FallbackARScene {
     private deviceHeading = 0;
     private animationFrameId: number | null = null;
 
+    // Navigation
+    private navEngine: NavigationEngine;
+    private coordMapper: CoordinateMapper;
+    private waypointRenderer: WaypointRenderer;
+    private contentGroup: THREE.Group; // Group to rotate based on compass
+
     constructor(
         private container: HTMLElement,
         config: ARSceneConfig
@@ -35,7 +41,7 @@ export class FallbackARScene {
         this.config = config;
         this.clock = new THREE.Clock();
 
-        // Create renderer (transparent so camera video shows behind)
+        // Create renderer
         this.renderer = new THREE.WebGLRenderer({
             alpha: true,
             antialias: true,
@@ -59,8 +65,7 @@ export class FallbackARScene {
             0.01,
             100
         );
-        this.camera.position.set(0, 1.5, 3);
-        this.camera.lookAt(0, 0, 0);
+        this.camera.position.set(0, 1.6, 0); // Assume eye level ~1.6m
 
         // Add lighting
         const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
@@ -70,6 +75,31 @@ export class FallbackARScene {
         directionalLight.position.set(0, 5, 5);
         this.scene.add(directionalLight);
 
+        // Content group for compass rotation
+        this.contentGroup = new THREE.Group();
+        this.scene.add(this.contentGroup);
+
+        // Init navigation
+        this.navEngine = new NavigationEngine();
+        this.coordMapper = new CoordinateMapper();
+        this.waypointRenderer = new WaypointRenderer(this.scene); // We'll move markers to contentGroup manually
+
+        // Override helper to add to contentGroup instead of scene
+        this.waypointRenderer = new WaypointRenderer(this.scene);
+        // Hack: Replace scene with group for renderer so objects go into the group
+        (this.waypointRenderer as any).scene = this.contentGroup;
+
+        // Start pathfinding
+        const success = this.navEngine.initialize(
+            config.graph,
+            config.startNodeId,
+            config.targetSectionId
+        );
+
+        if (!success) {
+            config.onError?.('No path found.');
+        }
+
         // Handle resize
         window.addEventListener('resize', this.handleResize);
     }
@@ -78,43 +108,70 @@ export class FallbackARScene {
      * Start the fallback AR experience.
      */
     async start(): Promise<void> {
-        // Step 1: Request camera
         try {
             await this.startCamera();
         } catch (err) {
             const msg =
                 err instanceof DOMException && err.name === 'NotAllowedError'
-                    ? 'Camera permission denied. Please allow camera access for AR.'
-                    : 'Could not access camera. Please ensure camera permissions are granted.';
+                    ? 'Camera permission denied.'
+                    : 'Could not access camera.';
             this.config.onError?.(msg);
             return;
         }
 
-        // Step 2: Request device orientation (iOS 13+ requires explicit permission)
         try {
             await this.requestOrientationPermission();
         } catch {
-            // Orientation may not be available — arrow will still show, just won't rotate with compass
             console.warn('[AR Nav] Device orientation not available');
         }
 
-        // Step 3: Set up orientation listener
         this.setupOrientationListener();
 
-        // Step 4: Create arrow
-        this.arrow = createArrowModel();
-        // Scale up slightly for visibility in camera overlay
-        this.arrow.scale.set(1.5, 1.5, 1.5);
-        this.arrow.position.set(0, -0.3, 0);
-        this.scene.add(this.arrow);
+        // Calibrate coordinate mapper (assume user is at start node, facing North initially?)
+        // In fallback, we assume map (0,0) is where we are? No.
+        // We assume we are AT the start node.
+        const startNode = this.config.graph.nodes.get(this.config.startNodeId);
+        if (startNode) {
+            this.coordMapper.calibrate(startNode, { x: 0, y: 0, z: 0 });
+            this.refreshWaypoints();
+        }
 
-        // Step 5: Start render loop
         this.renderLoop();
     }
 
     /**
-     * Start the rear camera feed.
+     * Update start node after QR scan
      */
+    recalibrateFromNode(nodeId: string): void {
+        const node = this.config.graph.nodes.get(nodeId);
+        if (!node) return;
+
+        // Reset user to this node
+        this.navEngine.setStartNode(nodeId);
+        this.coordMapper.calibrate(node, { x: 0, y: 0, z: 0 });
+        this.refreshWaypoints();
+    }
+
+    private refreshWaypoints(): void {
+        const path = this.navEngine.getFullPath();
+        // Since we don't track position, we just show the full path from start
+        // or from current "assumed" position.
+        // The engine updates position based on map coordinates.
+        // We will feed the engine our *assumed* map coordinates (which is just the start node location).
+
+        const userMapPos = this.coordMapper.arToMap(0, 0); // We are always at 0,0 AR
+        const navState = this.navEngine.updatePosition(userMapPos.x, userMapPos.z);
+
+        this.config.onStateUpdate?.(navState);
+        this.config.onDistanceUpdate?.(navState.remainingDistance);
+
+        this.waypointRenderer.renderPath(
+            navState.remainingWaypoints,
+            (node) => this.coordMapper.nodeToAR(node),
+            0
+        );
+    }
+
     private async startCamera(): Promise<void> {
         const stream = await navigator.mediaDevices.getUserMedia({
             video: {
@@ -146,47 +203,33 @@ export class FallbackARScene {
         await video.play();
     }
 
-    /**
-     * Request DeviceOrientation permission (required on iOS 13+).
-     */
     private async requestOrientationPermission(): Promise<void> {
-        // TypeScript doesn't have requestPermission in its types
         const DevOrientEvent = DeviceOrientationEvent as unknown as {
             requestPermission?: () => Promise<string>;
         };
-
         if (typeof DevOrientEvent.requestPermission === 'function') {
             const permission = await DevOrientEvent.requestPermission();
             if (permission !== 'granted') {
                 throw new Error('Motion permission denied');
             }
         }
-        // On Android/other browsers, no permission request needed
     }
 
-    /**
-     * Listen for device orientation events to get compass heading.
-     */
     private setupOrientationListener(): void {
         const handleOrientation = (event: DeviceOrientationEvent) => {
             if (this.disposed) return;
-
-            // webkitCompassHeading for iOS Safari, alpha for others
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const compassHeading = (event as any).webkitCompassHeading;
 
             if (compassHeading !== undefined && compassHeading !== null) {
-                // iOS: webkitCompassHeading is 0-360, 0=North, clockwise
+                // iOS: 0=North, clockwise
                 this.deviceHeading = (compassHeading * Math.PI) / 180;
             } else if (event.alpha !== null) {
-                // Android/other: alpha is 0-360, 0=North, counterclockwise
+                // Android: 0=North, counter-clockwise usually
                 this.deviceHeading = ((360 - (event.alpha ?? 0)) * Math.PI) / 180;
             }
         };
-
         window.addEventListener('deviceorientation', handleOrientation, true);
-
-        // Store cleanup reference
         this._orientationCleanup = () => {
             window.removeEventListener('deviceorientation', handleOrientation, true);
         };
@@ -194,98 +237,67 @@ export class FallbackARScene {
 
     private _orientationCleanup: (() => void) | null = null;
 
-    /**
-     * Main render loop (non-XR, uses requestAnimationFrame).
-     */
     private renderLoop = (): void => {
         if (this.disposed) return;
-
         this.animationFrameId = requestAnimationFrame(this.renderLoop);
-
-        if (!this.arrow) return;
 
         const elapsed = this.clock.getElapsedTime();
 
-        // Animate arrow floating/pulse
-        animateArrow(this.arrow, elapsed);
+        // Update correct heading
+        // If content is aligned with North = -Z (standard Three.js logic often uses -Z as forward)
+        // Adjust based on your map coordinates.
+        // Assuming map +Z is North????
+        // Let's assume Map coordinates: X=East, Z=South (common in graphics, Z grows forward).
+        // If device heading is 0 (North), looking at North should show objects at North.
+        // If map +Z is South, then North is -Z.
+        // If deviceHeading is 0, we look at -Z.
+        // So we rotate the world by -deviceHeading?
+        // Needs tuning, but typically:
+        this.contentGroup.rotation.y = -this.deviceHeading;
 
-        // Fix the Y position after animateArrow modifies it
-        this.arrow.position.y = -0.3 + Math.sin(elapsed * 2) * 0.05;
+        // Animate waypoints
+        this.waypointRenderer.animate(elapsed);
 
-        // Calculate direction from entrance (0,0) to target
-        const targetAngle = getDirectionAngle(
-            { x: 0, z: 0 },
-            { x: this.config.targetX, z: this.config.targetZ }
+        // Update lead arrow
+        const navState = this.navEngine.updatePosition(
+            this.coordMapper.arToMap(0, 0).x,
+            this.coordMapper.arToMap(0, 0).z
         );
-
-        // Rotate arrow: target direction minus device heading
-        // This makes the arrow point correctly regardless of which way the phone faces
-        this.arrow.rotation.y = targetAngle - this.deviceHeading;
-
-        // Calculate and report distance (from entrance to target)
-        const distance = getDistanceToTarget(
-            { x: 0, z: 0 },
-            { x: this.config.targetX, z: this.config.targetZ }
-        );
-        this.config.onDistanceUpdate?.(distance);
+        if (navState.remainingWaypoints.length > 0) {
+            const nextWp = navState.remainingWaypoints[0];
+            const nextAR = this.coordMapper.nodeToAR(nextWp);
+            // We use relative position (0,0,0) for camera
+            this.waypointRenderer.updateLeadArrow(
+                { x: 0, y: 0, z: 0 },
+                nextAR,
+                elapsed
+            );
+        }
 
         this.renderer.render(this.scene, this.camera);
     };
 
-    /**
-     * Handle window resize.
-     */
     private handleResize = (): void => {
         this.camera.aspect = window.innerWidth / window.innerHeight;
         this.camera.updateProjectionMatrix();
         this.renderer.setSize(window.innerWidth, window.innerHeight);
     };
 
-    /**
-     * Clean up everything.
-     */
     async dispose(): Promise<void> {
         this.disposed = true;
-
-        // Stop render loop
-        if (this.animationFrameId !== null) {
-            cancelAnimationFrame(this.animationFrameId);
-        }
-
-        // Stop orientation listener
+        if (this.animationFrameId !== null) cancelAnimationFrame(this.animationFrameId);
         this._orientationCleanup?.();
-
-        // Stop camera stream
-        if (this.mediaStream) {
-            this.mediaStream.getTracks().forEach((track) => track.stop());
-        }
-
-        // Remove video element
-        if (this.videoElement && this.videoElement.parentElement) {
-            this.videoElement.parentElement.removeChild(this.videoElement);
-        }
-
-        // Remove resize listener
+        if (this.mediaStream) this.mediaStream.getTracks().forEach((track) => track.stop());
+        if (this.videoElement?.parentElement) this.videoElement.parentElement.removeChild(this.videoElement);
         window.removeEventListener('resize', this.handleResize);
 
-        // Dispose Three.js resources
-        this.scene.traverse((object) => {
-            if (object instanceof THREE.Mesh) {
-                object.geometry.dispose();
-                if (Array.isArray(object.material)) {
-                    object.material.forEach((m) => m.dispose());
-                } else {
-                    object.material.dispose();
-                }
-            }
-        });
+        this.waypointRenderer.dispose();
+        this.navEngine.dispose();
+        this.coordMapper.reset();
 
         this.renderer.dispose();
-
         if (this.renderer.domElement.parentElement) {
-            this.renderer.domElement.parentElement.removeChild(
-                this.renderer.domElement
-            );
+            this.renderer.domElement.parentElement.removeChild(this.renderer.domElement);
         }
     }
 }

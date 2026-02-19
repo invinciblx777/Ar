@@ -9,7 +9,9 @@ interface ErrorOverlayProps {
     | 'error'
     | 'loading'
     | 'desktop'
-    | 'motion-permission';
+    | 'motion-permission'
+    | 'qr-error'
+    | 'no-path';
     message?: string;
     onRetry?: () => void;
     onBack?: () => void;
@@ -36,8 +38,8 @@ const configs = {
     },
     loading: {
         icon: '',
-        title: 'Optimizing AR for Your Device',
-        defaultMessage: 'Setting up camera and AR environment...',
+        title: 'Starting Navigation',
+        defaultMessage: 'Calibrating sensors and loading map...',
     },
     desktop: {
         icon: '📱',
@@ -51,6 +53,18 @@ const configs = {
         defaultMessage:
             'To navigate in AR, we need access to your device\'s motion sensors. Tap "Allow" when prompted.',
     },
+    'qr-error': {
+        icon: '❌',
+        title: 'QR Scan Failed',
+        defaultMessage:
+            'Could not read the QR code. Please try again or move closer.',
+    },
+    'no-path': {
+        icon: '🚷',
+        title: 'No Path Found',
+        defaultMessage:
+            'We couldn\'t find a valid path to this section. It may be unreachable from here.',
+    }
 };
 
 export default function ErrorOverlay({
@@ -59,7 +73,7 @@ export default function ErrorOverlay({
     onRetry,
     onBack,
 }: ErrorOverlayProps) {
-    const config = configs[type];
+    const config = configs[type] || configs.error;
 
     return (
         <motion.div

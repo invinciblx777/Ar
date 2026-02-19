@@ -1,28 +1,43 @@
 import * as THREE from 'three';
-import { createArrowModel, animateArrow } from './ArrowModel';
-import { getDirectionAngle } from '../utils/navigation';
+import { WaypointRenderer } from './WaypointRenderer';
+import { CoordinateMapper } from './coordinateMapper';
+import { NavigationEngine, type NavigationState, type NavigationEvent } from './navigationEngine';
+import type { NavigationGraph, NavigationNode } from '../lib/mapData';
 
 export interface ARSceneConfig {
-    targetX: number;
-    targetZ: number;
+    /** ID of the target section to navigate to */
+    targetSectionId: string;
+    /** Navigation graph data */
+    graph: NavigationGraph;
+    /** Starting node ID (entrance or QR anchor) */
+    startNodeId: string;
+    /** Callbacks */
     onSessionEnd?: () => void;
     onError?: (message: string) => void;
     onDistanceUpdate?: (distance: number) => void;
+    onNavigationEvent?: (event: NavigationEvent) => void;
+    onStateUpdate?: (state: NavigationState) => void;
 }
 
 /**
  * Core AR Scene manager — handles Three.js renderer, WebXR session,
- * arrow placement, and real-time direction updates.
+ * waypoint-based navigation rendering, and real-time position updates.
  */
 export class ARScene {
     private renderer: THREE.WebGLRenderer;
     private scene: THREE.Scene;
     private camera: THREE.PerspectiveCamera;
-    private arrow: THREE.Group | null = null;
     private config: ARSceneConfig;
     private xrSession: XRSession | null = null;
     private clock: THREE.Clock;
     private disposed = false;
+
+    // Navigation system
+    private navEngine: NavigationEngine;
+    private coordMapper: CoordinateMapper;
+    private waypointRenderer: WaypointRenderer;
+    private calibrated = false;
+    private lastRenderedWaypointCount = -1;
 
     constructor(
         private container: HTMLElement,
@@ -62,6 +77,31 @@ export class ARScene {
         directionalLight.position.set(0, 5, 5);
         this.scene.add(directionalLight);
 
+        // Initialize navigation systems
+        this.navEngine = new NavigationEngine();
+        this.coordMapper = new CoordinateMapper();
+        this.waypointRenderer = new WaypointRenderer(this.scene);
+
+        // Listen for navigation events
+        this.navEngine.addEventListener((event: NavigationEvent) => {
+            this.config.onNavigationEvent?.(event);
+
+            if (event.type === 'pathRecalculated') {
+                this.refreshWaypoints();
+            }
+        });
+
+        // Initialize pathfinding
+        const success = this.navEngine.initialize(
+            config.graph,
+            config.startNodeId,
+            config.targetSectionId
+        );
+
+        if (!success) {
+            config.onError?.('No path found to destination. Please try a different section.');
+        }
+
         // Handle resize
         window.addEventListener('resize', this.handleResize);
     }
@@ -100,11 +140,6 @@ export class ARScene {
 
             await this.renderer.xr.setSession(session);
 
-            // Create and add arrow
-            this.arrow = createArrowModel();
-            this.arrow.position.set(0, -0.5, -2); // Start 2m ahead, on floor
-            this.scene.add(this.arrow);
-
             // Start render loop
             this.renderer.setAnimationLoop(this.renderFrame);
         } catch (err) {
@@ -117,15 +152,24 @@ export class ARScene {
     }
 
     /**
+     * Update the start node (e.g. after QR scan) and recalibrate.
+     */
+    recalibrateFromNode(nodeId: string, currentARPosition: { x: number; z: number }): void {
+        const node = this.config.graph.nodes.get(nodeId);
+        if (!node) return;
+
+        this.coordMapper.recalibrateFromQR(node, { x: currentARPosition.x, y: 0, z: currentARPosition.z });
+        this.navEngine.setStartNode(nodeId);
+        this.refreshWaypoints();
+    }
+
+    /**
      * Render loop — called each frame during the XR session.
      */
     private renderFrame = (_time: number, frame?: XRFrame): void => {
-        if (this.disposed || !this.arrow) return;
+        if (this.disposed) return;
 
         const elapsed = this.clock.getElapsedTime();
-
-        // Animate arrow (floating + pulse)
-        animateArrow(this.arrow, elapsed);
 
         if (frame) {
             const referenceSpace = this.renderer.xr.getReferenceSpace();
@@ -133,37 +177,81 @@ export class ARScene {
 
             if (pose) {
                 const viewerPosition = pose.transform.position;
-
-                // Current camera position on the floor plane
                 const cameraX = viewerPosition.x;
                 const cameraZ = viewerPosition.z;
 
-                // Calculate direction to target
-                const angle = getDirectionAngle(
-                    { x: cameraX, z: cameraZ },
-                    { x: this.config.targetX, z: this.config.targetZ }
-                );
+                // Calibrate on first valid pose
+                if (!this.calibrated) {
+                    const entranceNode = this.config.graph.nodes.get(this.config.startNodeId);
+                    if (entranceNode) {
+                        this.coordMapper.calibrate(entranceNode, { x: cameraX, y: 0, z: cameraZ });
+                        this.calibrated = true;
+                        this.refreshWaypoints();
+                    }
+                }
 
-                // Position arrow 2m ahead of camera on the floor
-                this.arrow.position.set(
-                    cameraX + Math.sin(angle) * 2,
-                    -0.5, // Floor level
-                    cameraZ + Math.cos(angle) * 2
-                );
+                if (this.calibrated) {
+                    // Convert AR position to map space
+                    const mapPos = this.coordMapper.arToMap(cameraX, cameraZ);
 
-                // Rotate arrow to point toward target
-                this.arrow.rotation.y = angle;
+                    // Update navigation engine
+                    const navState = this.navEngine.updatePosition(mapPos.x, mapPos.z);
+                    this.config.onStateUpdate?.(navState);
 
-                // Calculate distance
-                const dx = this.config.targetX - cameraX;
-                const dz = this.config.targetZ - cameraZ;
-                const distance = Math.sqrt(dx * dx + dz * dz);
-                this.config.onDistanceUpdate?.(distance);
+                    // Update distance display
+                    this.config.onDistanceUpdate?.(navState.remainingDistance);
+
+                    // Update waypoint rendering
+                    if (navState.remainingWaypoints.length !== this.lastRenderedWaypointCount) {
+                        this.refreshWaypoints();
+                        this.lastRenderedWaypointCount = navState.remainingWaypoints.length;
+                    }
+
+                    this.waypointRenderer.setActiveWaypoint(0); // First remaining is always "next"
+
+                    // Update lead arrow
+                    if (navState.remainingWaypoints.length > 0) {
+                        const nextWp = navState.remainingWaypoints[0];
+                        const nextAR = this.coordMapper.nodeToAR(nextWp);
+                        this.waypointRenderer.updateLeadArrow(
+                            { x: cameraX, y: 0, z: cameraZ },
+                            nextAR,
+                            elapsed
+                        );
+                    }
+                }
             }
         }
 
+        // Animate waypoint markers
+        this.waypointRenderer.animate(elapsed);
+
         this.renderer.render(this.scene, this.camera);
     };
+
+    /**
+     * Refresh waypoint markers based on current path.
+     */
+    private refreshWaypoints(): void {
+        const path = this.navEngine.getFullPath();
+        const remaining = path.slice(
+            Math.max(0, path.indexOf(
+                path.find((_wp, i) => i >= (this.navEngine as unknown as { currentWaypointIndex: number }).currentWaypointIndex) || path[0]
+            ))
+        );
+
+        // Use remaining waypoints from the engine's state
+        const waypoints = this.navEngine.updatePosition(
+            this.navEngine.getUserPosition().x,
+            this.navEngine.getUserPosition().z
+        ).remainingWaypoints;
+
+        this.waypointRenderer.renderPath(
+            waypoints,
+            (node: NavigationNode) => this.coordMapper.nodeToAR(node),
+            0
+        );
+    }
 
     /**
      * Handle window resize.
@@ -181,6 +269,11 @@ export class ARScene {
         this.disposed = true;
         this.renderer.setAnimationLoop(null);
         window.removeEventListener('resize', this.handleResize);
+
+        // Dispose navigation systems
+        this.waypointRenderer.dispose();
+        this.navEngine.dispose();
+        this.coordMapper.reset();
 
         if (this.xrSession) {
             try {
