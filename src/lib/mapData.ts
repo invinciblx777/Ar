@@ -1,5 +1,4 @@
 import { supabase } from './supabaseClient';
-import type { PostgrestError } from '@supabase/supabase-js';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -10,6 +9,7 @@ export interface NavigationNode {
     floor_id: string;
     walkable: boolean;
     label: string | null;
+    type?: 'normal' | 'entrance' | 'section';
 }
 
 export interface NavigationEdge {
@@ -53,24 +53,24 @@ export interface NavigationGraph {
 const FALLBACK_FLOOR_ID = 'f0000000-0000-0000-0000-000000000001';
 
 const FALLBACK_NODES: NavigationNode[] = [
-    { id: 'n001', x: 0, z: 0, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Entrance' },
-    { id: 'n002', x: 0, z: 3, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Main Aisle Start' },
-    { id: 'n003', x: 0, z: 6, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Main Junction 1' },
-    { id: 'n004', x: 0, z: 10, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Main Junction 2' },
-    { id: 'n005', x: 0, z: 14, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Back Wall' },
-    { id: 'n006', x: -4, z: 6, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Left Aisle 1' },
-    { id: 'n007', x: -8, z: 6, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Groceries' },
-    { id: 'n008', x: -4, z: 10, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Left Aisle 2' },
-    { id: 'n009', x: -8, z: 10, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Fresh Produce' },
-    { id: 'n010', x: 4, z: 6, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Right Aisle 1' },
-    { id: 'n011', x: 8, z: 6, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Electronics' },
-    { id: 'n012', x: 4, z: 10, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Right Aisle 2' },
-    { id: 'n013', x: 8, z: 10, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Clothing' },
-    { id: 'n014', x: -4, z: 14, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Back Left' },
-    { id: 'n015', x: 4, z: 14, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Back Right' },
-    { id: 'n016', x: 4, z: 2, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Billing' },
-    { id: 'n017', x: 4, z: 3, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Right Near Entrance' },
-    { id: 'n018', x: -4, z: 3, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Left Near Entrance' },
+    { id: 'n001', x: 0, z: 0, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Entrance', type: 'entrance' },
+    { id: 'n002', x: 0, z: 3, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Main Aisle Start', type: 'normal' },
+    { id: 'n003', x: 0, z: 6, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Main Junction 1', type: 'normal' },
+    { id: 'n004', x: 0, z: 10, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Main Junction 2', type: 'normal' },
+    { id: 'n005', x: 0, z: 14, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Back Wall', type: 'normal' },
+    { id: 'n006', x: -4, z: 6, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Left Aisle 1', type: 'normal' },
+    { id: 'n007', x: -8, z: 6, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Groceries', type: 'section' },
+    { id: 'n008', x: -4, z: 10, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Left Aisle 2', type: 'normal' },
+    { id: 'n009', x: -8, z: 10, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Fresh Produce', type: 'normal' },
+    { id: 'n010', x: 4, z: 6, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Right Aisle 1', type: 'normal' },
+    { id: 'n011', x: 8, z: 6, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Electronics', type: 'section' },
+    { id: 'n012', x: 4, z: 10, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Right Aisle 2', type: 'normal' },
+    { id: 'n013', x: 8, z: 10, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Clothing', type: 'section' },
+    { id: 'n014', x: -4, z: 14, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Back Left', type: 'normal' },
+    { id: 'n015', x: 4, z: 14, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Back Right', type: 'normal' },
+    { id: 'n016', x: 4, z: 2, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Billing', type: 'section' },
+    { id: 'n017', x: 4, z: 3, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Right Near Entrance', type: 'normal' },
+    { id: 'n018', x: -4, z: 3, floor_id: FALLBACK_FLOOR_ID, walkable: true, label: 'Left Near Entrance', type: 'normal' },
 ];
 
 function dist(a: NavigationNode, b: NavigationNode): number {
@@ -136,10 +136,15 @@ function buildAdjacency(
 }
 
 function findEntranceNode(nodes: Map<string, NavigationNode>): string {
-    // Prefer node labeled 'Entrance', else node closest to (0,0)
+    // 1. Prefer node with type === 'entrance'
+    for (const [id, node] of nodes) {
+        if (node.type === 'entrance') return id;
+    }
+    // 2. Fallback: node labeled 'Entrance'
     for (const [id, node] of nodes) {
         if (node.label?.toLowerCase() === 'entrance') return id;
     }
+    // 3. Fallback: node closest to (0,0)
     let bestId = '';
     let bestDist = Infinity;
     for (const [id, node] of nodes) {
