@@ -51,7 +51,7 @@ export default function AdminLoginPage() {
       return;
     }
 
-    router.push('/admin/map-builder');
+    router.push('/admin/dashboard');
   }
 
   return (

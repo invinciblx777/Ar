@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ARScene } from '../../ar/ARScene';
 import { FallbackARScene } from '../../ar/FallbackARScene';
 // Systems
-import { fetchNavigationGraph, type NavigationGraph } from '../../lib/mapData';
+import { fetchNavigationGraph, fetchNavigationGraphForStore, type NavigationGraph } from '../../lib/mapData';
 import { getSectionById, type Section } from '../../lib/sections';
 import { detectARSupport, type ARSupportInfo } from '../../utils/detectARSupport';
 import { formatDistance } from '../../utils/navigation';
@@ -55,6 +55,7 @@ function ARPageContent() {
     const [userPosition, setUserPosition] = useState({ x: 0, z: 0 });
 
     const sectionId = searchParams.get('section');
+    const storeIdParam = searchParams.get('storeId');
     const debugParam = searchParams.get('debug');
 
     useEffect(() => {
@@ -279,8 +280,10 @@ function ARPageContent() {
         let mounted = true;
 
         async function load() {
-            // 1. Fetch Graph
-            const graphData = await fetchNavigationGraph();
+            // 1. Fetch Graph (use store-specific if storeId provided)
+            const graphData = storeIdParam
+                ? await fetchNavigationGraphForStore(storeIdParam)
+                : await fetchNavigationGraph();
             if (!mounted) return;
             setGraph(graphData);
 

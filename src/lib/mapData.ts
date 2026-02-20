@@ -157,8 +157,107 @@ function findEntranceNode(nodes: Map<string, NavigationNode>): string {
     return bestId;
 }
 
+function buildGraph(
+    rawNodes: NavigationNode[],
+    rawEdges: NavigationEdge[],
+    rawSections: StoreSection[],
+    rawFloors: Floor[]
+): NavigationGraph {
+    const nodes = new Map<string, NavigationNode>();
+    for (const n of rawNodes) {
+        nodes.set(n.id, n);
+    }
+    const adjacency = buildAdjacency(nodes, rawEdges);
+    const entranceNodeId = findEntranceNode(nodes);
+    return { nodes, edges: rawEdges, adjacency, sections: rawSections, floors: rawFloors, entranceNodeId };
+}
+
 // ── Public API ─────────────────────────────────────────────────
 
+/**
+ * Fetch the navigation graph for a specific store (uses published version).
+ * This is the primary function for AR navigation.
+ */
+export async function fetchNavigationGraphForStore(storeId: string): Promise<NavigationGraph> {
+    if (!supabase) {
+        console.info('[AR Nav] Supabase not configured — using fallback graph');
+        return buildFallbackGraph();
+    }
+
+    try {
+        // Get published version for this store
+        const { data: version, error: vError } = await supabase
+            .from('store_versions')
+            .select('id')
+            .eq('store_id', storeId)
+            .eq('is_published', true)
+            .order('version_number', { ascending: false })
+            .limit(1)
+            .single();
+
+        if (vError || !version) {
+            console.error('[AR Nav] No published version found for store', storeId);
+            return buildFallbackGraph();
+        }
+
+        return fetchNavigationGraphForVersion(version.id);
+    } catch (err) {
+        console.error('[AR Nav] Failed to fetch store graph:', err);
+        return buildFallbackGraph();
+    }
+}
+
+/**
+ * Fetch the navigation graph for a specific version (used by admin map builder).
+ */
+export async function fetchNavigationGraphForVersion(versionId: string): Promise<NavigationGraph> {
+    if (!supabase) {
+        return buildFallbackGraph();
+    }
+
+    try {
+        // Get floors for this version
+        const { data: floors, error: fError } = await supabase
+            .from('floors')
+            .select('*')
+            .eq('store_version_id', versionId)
+            .order('level_number');
+
+        if (fError || !floors || floors.length === 0) {
+            console.error('[AR Nav] No floors found for version', versionId);
+            return buildFallbackGraph();
+        }
+
+        const floorIds = floors.map((f: { id: string }) => f.id);
+
+        // Fetch nodes, edges, sections for these floors
+        const [nodesRes, edgesRes, sectionsRes] = await Promise.all([
+            supabase.from('navigation_nodes').select('*').in('floor_id', floorIds),
+            supabase.from('navigation_edges').select('*').in('floor_id', floorIds),
+            supabase.from('sections').select('*').in('floor_id', floorIds).order('name'),
+        ]);
+
+        if (nodesRes.error || edgesRes.error || sectionsRes.error) {
+            console.error('[AR Nav] Fetch error for version', versionId);
+            return buildFallbackGraph();
+        }
+
+        return buildGraph(
+            nodesRes.data as NavigationNode[],
+            edgesRes.data as NavigationEdge[],
+            sectionsRes.data as StoreSection[],
+            floors as Floor[]
+        );
+    } catch (err) {
+        console.error('[AR Nav] Failed to fetch version graph:', err);
+        return buildFallbackGraph();
+    }
+}
+
+/**
+ * Legacy: fetch all navigation data (no store/version filtering).
+ * Kept for backward compatibility.
+ */
 export async function fetchNavigationGraph(): Promise<NavigationGraph> {
     if (!supabase) {
         console.info('[AR Nav] Supabase not configured — using fallback graph');
@@ -178,18 +277,12 @@ export async function fetchNavigationGraph(): Promise<NavigationGraph> {
             return buildFallbackGraph();
         }
 
-        const nodes = new Map<string, NavigationNode>();
-        for (const n of nodesRes.data as NavigationNode[]) {
-            nodes.set(n.id, n);
-        }
-
-        const edges = edgesRes.data as NavigationEdge[];
-        const sections = sectionsRes.data as StoreSection[];
-        const floors = floorsRes.data as Floor[];
-        const adjacency = buildAdjacency(nodes, edges);
-        const entranceNodeId = findEntranceNode(nodes);
-
-        return { nodes, edges, adjacency, sections, floors, entranceNodeId };
+        return buildGraph(
+            nodesRes.data as NavigationNode[],
+            edgesRes.data as NavigationEdge[],
+            sectionsRes.data as StoreSection[],
+            floorsRes.data as Floor[]
+        );
     } catch (err) {
         console.error('[AR Nav] Failed to fetch navigation graph:', err);
         return buildFallbackGraph();
