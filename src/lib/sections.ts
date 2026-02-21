@@ -5,6 +5,8 @@ export interface Section {
     name: string;
     node_id: string;
     icon: string | null;
+    category?: string;
+    description?: string;
     // We optionally include coordinates for backwards compatibility or easy access
     x?: number;
     z?: number;

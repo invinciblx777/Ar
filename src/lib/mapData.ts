@@ -9,7 +9,7 @@ export interface NavigationNode {
     floor_id: string;
     walkable: boolean;
     label: string | null;
-    type?: 'normal' | 'entrance' | 'section';
+    type?: 'normal' | 'entrance' | 'section' | 'qr_anchor';
 }
 
 export interface NavigationEdge {
@@ -24,6 +24,8 @@ export interface StoreSection {
     name: string;
     node_id: string;
     icon: string | null;
+    category?: string;
+    description?: string;
 }
 
 export interface Floor {

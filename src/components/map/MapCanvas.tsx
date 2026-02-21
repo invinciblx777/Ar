@@ -13,6 +13,7 @@ const NODE_COLORS: Record<string, string> = {
   normal: '#00f0ff',
   entrance: '#00ff88',
   section: '#a855f7',
+  qr_anchor: '#f59e0b',
 };
 
 const NODE_RADIUS = 8;
@@ -425,6 +426,19 @@ export default function MapCanvas({
                     y={pz - 4}
                     text="S"
                     fontSize={9}
+                    fontStyle="bold"
+                    fill="#fff"
+                    listening={false}
+                  />
+                )}
+
+                {/* QR Anchor icon */}
+                {node.type === 'qr_anchor' && (
+                  <Text
+                    x={px - 5}
+                    y={pz - 4}
+                    text="QR"
+                    fontSize={8}
                     fontStyle="bold"
                     fill="#fff"
                     listening={false}

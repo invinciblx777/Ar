@@ -12,9 +12,9 @@ import { type Section } from '../../lib/sections';
 import { detectARSupport, type ARSupportInfo } from '../../utils/detectARSupport';
 import { formatDistance } from '../../utils/navigation';
 import { QRScanner, type QRScanResult } from '../../utils/qrScanner';
-// Components
 import ErrorOverlay from '../../components/ErrorOverlay';
 import DebugOverlay from '../../components/DebugOverlay';
+import DestinationSelectionUI from '../../components/ar/DestinationSelectionUI';
 import type { NavigationEvent, NavigationState } from '../../ar/navigationEngine';
 
 type ARStatus =
@@ -50,6 +50,7 @@ function ARPageContent() {
     const [arMode, setArMode] = useState<'webxr' | 'fallback' | null>(null);
     const [showDebug, setShowDebug] = useState(false);
     const [isScanningQR, setIsScanningQR] = useState(false);
+    const [isSelectingDestination, setIsSelectingDestination] = useState(false);
     const [userPosition, setUserPosition] = useState({ x: 0, z: 0 });
 
     const sectionId = searchParams.get('section');
@@ -147,7 +148,7 @@ function ARPageContent() {
             }
 
             // Desktop check
-            if (!support.isMobile && sectionId !== 'debug') { // Allow debug bypass
+            if (!support.isMobile && section.id !== 'debug') { // Allow debug bypass
                 if (debugParam !== 'true') {
                     setStatus('desktop');
                     return;
@@ -222,20 +223,14 @@ function ARPageContent() {
 
             setStatus('unsupported');
         },
-        [handleBack, sectionId, debugParam]
+        [handleBack, debugParam]
     );
 
-    // ── Effect: Load Graph & Start ───────────────────────────────
-
     useEffect(() => {
-        if (!sectionId) {
-            handleBack();
-            return;
-        }
-
         let mounted = true;
 
         async function load() {
+            setStatus('loading');
             // 1. Fetch Graph (use store-specific if storeId provided)
             const graphData = storeIdParam
                 ? await fetchNavigationGraphForStore(storeIdParam)
@@ -243,19 +238,21 @@ function ARPageContent() {
             if (!mounted) return;
             setGraph(graphData);
 
-            // 2. Find Section
-            const section = flattenSection(graphData.sections.find(s => s.id === sectionId));
-
-            if (!section) {
-                console.error('Section not found in graph');
-                handleBack();
-                return;
+            // 2. Initial Destination checks
+            if (sectionId) {
+                const section = flattenSection(graphData.sections.find(s => s.id === sectionId));
+                if (section) {
+                    setTargetSection(section);
+                    initAR(section, graphData);
+                } else {
+                    console.error('Section not found in graph');
+                    setIsSelectingDestination(true);
+                    setStatus('idle' as any);
+                }
+            } else {
+                setIsSelectingDestination(true);
+                setStatus('idle' as any);
             }
-
-            setTargetSection(section);
-
-            // 3. Init AR
-            initAR(section, graphData);
         }
 
         load();
@@ -265,7 +262,23 @@ function ARPageContent() {
             if (arSceneRef.current) arSceneRef.current.dispose();
             if (qrScannerRef.current) qrScannerRef.current.stopScanning();
         };
-    }, [sectionId, handleBack, initAR]);
+    }, [sectionId, storeIdParam, initAR]);
+
+    const handleSelectDestination = useCallback((section: Section) => {
+        setIsSelectingDestination(false);
+        setTargetSection(section);
+        if (graph) {
+            // Update AR scene or restart
+            initAR(section, graph);
+        }
+    }, [graph, initAR]);
+
+    const handleCancelDestinationSelection = useCallback(() => {
+        setIsSelectingDestination(false);
+        if (!targetSection) {
+            handleBack(); // Return to previous if no active section
+        }
+    }, [targetSection, handleBack]);
 
     function flattenSection(s: StoreSection | undefined): Section | undefined {
         if (!s) return undefined;
@@ -274,6 +287,8 @@ function ARPageContent() {
             name: s.name,
             node_id: s.node_id,
             icon: s.icon,
+            category: s.category,
+            description: s.description,
             x: 0,
             z: 0,
         };
@@ -283,6 +298,16 @@ function ARPageContent() {
 
     return (
         <div className="fixed inset-0 bg-black">
+            {/* Destination Selection Overlay */}
+            <AnimatePresence>
+                {isSelectingDestination && graph && (
+                    <DestinationSelectionUI
+                        sections={graph.sections.map(flattenSection).filter(Boolean) as Section[]}
+                        onSelect={handleSelectDestination}
+                        onCancel={targetSection ? handleCancelDestinationSelection : undefined}
+                    />
+                )}
+            </AnimatePresence>
             {/* AR Container */}
             <div ref={containerRef} className="w-full h-full relative" />
 
@@ -339,6 +364,15 @@ function ARPageContent() {
                             </div>
 
                             <div className="flex gap-2 pointer-events-auto">
+                                {/* Change Destination Button */}
+                                <button
+                                    onClick={() => setIsSelectingDestination(true)}
+                                    className="glass-card px-3 h-10 rounded-xl flex items-center justify-center text-xs font-semibold text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+                                    title="Change Destination"
+                                >
+                                    Change
+                                </button>
+
                                 {/* QR Button */}
                                 <button
                                     onClick={startQRScan}

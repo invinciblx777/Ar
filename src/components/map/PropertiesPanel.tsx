@@ -8,9 +8,10 @@ interface PropertiesPanelProps {
   selectedSection: MapSection | null;
   onUpdateType: (nodeId: string, type: NodeType) => void;
   onUpdateLabel: (nodeId: string, label: string) => void;
-  onCreateSection: (nodeId: string, name: string) => void;
+  onCreateSection: (nodeId: string, name: string, category: string, description: string) => void;
   onDeleteSection: (nodeId: string) => void;
   onDeleteNode: (nodeId: string) => void;
+  onPrintQr?: (nodeId: string) => void;
 }
 
 export default function PropertiesPanel({
@@ -21,19 +22,24 @@ export default function PropertiesPanel({
   onCreateSection,
   onDeleteSection,
   onDeleteNode,
+  onPrintQr,
 }: PropertiesPanelProps) {
   const [label, setLabel] = useState('');
   const [sectionName, setSectionName] = useState('');
+  const [sectionCategory, setSectionCategory] = useState('');
+  const [sectionDescription, setSectionDescription] = useState('');
 
   // Sync label with selected node
   useEffect(() => {
     setLabel(selectedNode?.label || '');
   }, [selectedNode?.id, selectedNode?.label]);
 
-  // Sync section name
+  // Sync section properties
   useEffect(() => {
     setSectionName(selectedSection?.name || '');
-  }, [selectedSection?.name, selectedNode?.id]);
+    setSectionCategory(selectedSection?.category || '');
+    setSectionDescription(selectedSection?.description || '');
+  }, [selectedSection, selectedNode?.id]);
 
   if (!selectedNode) {
     return (
@@ -92,6 +98,7 @@ export default function PropertiesPanel({
             <option value="normal">Normal</option>
             <option value="entrance">Entrance</option>
             <option value="section">Section</option>
+            <option value="qr_anchor">QR Anchor</option>
           </select>
         </div>
 
@@ -117,35 +124,68 @@ export default function PropertiesPanel({
         {selectedNode.type === 'section' && (
           <div className="pt-3 border-t border-white/10">
             <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-2">
-              Section Name
+              Section Metadata
             </label>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2">
               <input
                 type="text"
                 value={sectionName}
                 onChange={(e) => setSectionName(e.target.value)}
-                placeholder="e.g. Electronics"
-                className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-white/80 placeholder-white/20 outline-none focus:border-accent/40 transition-colors"
+                placeholder="Name (e.g. Electronics)"
+                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-white/80 placeholder-white/20 outline-none focus:border-accent/40 transition-colors"
+              />
+              <input
+                type="text"
+                value={sectionCategory}
+                onChange={(e) => setSectionCategory(e.target.value)}
+                placeholder="Category (e.g. Technology)"
+                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-white/80 placeholder-white/20 outline-none focus:border-accent/40 transition-colors"
+              />
+              <textarea
+                value={sectionDescription}
+                onChange={(e) => setSectionDescription(e.target.value)}
+                placeholder="Description"
+                rows={2}
+                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-xs text-white/80 placeholder-white/20 outline-none focus:border-accent/40 transition-colors resize-none"
               />
               <button
                 onClick={() => {
                   if (sectionName.trim()) {
-                    onCreateSection(selectedNode.id, sectionName.trim());
+                    onCreateSection(selectedNode.id, sectionName.trim(), sectionCategory.trim(), sectionDescription.trim());
                   }
                 }}
-                className="px-3 py-2 rounded-lg bg-accent/15 text-accent text-xs font-medium border border-accent/30 hover:bg-accent/25 transition-colors"
+                className="w-full py-2 rounded-lg bg-accent/15 text-accent text-xs font-medium border border-accent/30 hover:bg-accent/25 transition-colors"
               >
-                {selectedSection ? 'Update' : 'Create'}
+                {selectedSection ? 'Update Section' : 'Create Section'}
               </button>
             </div>
             {selectedSection && (
               <button
                 onClick={() => onDeleteSection(selectedNode.id)}
-                className="mt-2 text-[10px] text-red-400/60 hover:text-red-400 transition-colors"
+                className="mt-3 w-full text-center text-[10px] text-red-400/60 hover:text-red-400 transition-colors"
               >
                 Remove section
               </button>
             )}
+          </div>
+        )}
+
+        {/* QR Anchor */}
+        {selectedNode.type === 'qr_anchor' && (
+          <div className="pt-3 border-t border-white/10">
+            <label className="block text-[10px] text-white/40 uppercase tracking-wider mb-2">
+              QR Configuration
+            </label>
+            <button
+              onClick={() => onPrintQr?.(selectedNode.id)}
+              className="w-full py-2 flex items-center justify-center gap-2 rounded-lg bg-white text-[#0d0d18] text-xs font-bold hover:bg-gray-200 transition-colors"
+            >
+              <span>Generate & Print QR</span>
+              <span className="text-sm">🖨️</span>
+            </button>
+            <p className="mt-2 text-[9px] text-white/30 leading-snug">
+              Scanner payloads include store, version, floor, and this node ID to recalibrate AR engine.
+            </p>
           </div>
         )}
 

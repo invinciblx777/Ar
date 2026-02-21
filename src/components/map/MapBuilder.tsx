@@ -9,6 +9,7 @@ import MapCanvas from './MapCanvas';
 import Toolbar from './Toolbar';
 import PropertiesPanel from './PropertiesPanel';
 import PathSimulator from './PathSimulator';
+import QRCodeDialog from '../admin/QRCodeDialog';
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -17,9 +18,11 @@ export interface MapNode {
   x: number;
   z: number;
   floor_id: string;
-  type: 'normal' | 'entrance' | 'section';
+  type: 'normal' | 'entrance' | 'section' | 'qr_anchor';
   label: string | null;
 }
+
+export type NodeType = MapNode['type'];
 
 export interface MapEdge {
   id: string;
@@ -32,6 +35,9 @@ export interface MapSection {
   name: string;
   node_id: string;
   floor_id: string;
+  category?: string;
+  description?: string;
+  icon?: string;
 }
 
 interface FloorData {
@@ -43,7 +49,6 @@ interface FloorData {
 }
 
 export type Tool = 'select' | 'addNode' | 'connect' | 'delete';
-export type NodeType = 'normal' | 'entrance' | 'section';
 
 interface MapBuilderProps {
   storeId?: string;
@@ -77,6 +82,9 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
   // Path simulation
   const [simPath, setSimPath] = useState<NavigationNode[] | null>(null);
   const [simDistance, setSimDistance] = useState(0);
+
+  // Dialogs
+  const [showQrDialogFor, setShowQrDialogFor] = useState<string | null>(null);
 
   // Status
   const [loading, setLoading] = useState(true);
@@ -575,7 +583,7 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
     setDirty(true);
   }
 
-  function handleCreateSection(nodeId: string, name: string) {
+  function handleCreateSection(nodeId: string, name: string, category: string, description: string) {
     if (!floor) return;
     const filtered = sections.filter((s) => s.node_id !== nodeId);
     filtered.push({
@@ -583,6 +591,8 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
       name,
       node_id: nodeId,
       floor_id: floor.id,
+      category,
+      description,
     });
     setSections(filtered);
     setNodes((prev) =>
@@ -591,6 +601,10 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
       )
     );
     setDirty(true);
+  }
+
+  function handlePrintQr(nodeId: string) {
+    setShowQrDialogFor(nodeId);
   }
 
   function handleDeleteSection(nodeId: string) {
@@ -951,6 +965,7 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
                 if (error) console.error('[MapBuilder] Delete node failed:', error);
               });
           }}
+          onPrintQr={handlePrintQr}
         />
       </div>
 
@@ -963,6 +978,16 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
         onSimulate={handleSimulate}
         onClear={handleClearSimulation}
       />
+      {/* Modals & Overlays */}
+      {showQrDialogFor && floor && (
+        <QRCodeDialog
+          nodeId={showQrDialogFor}
+          storeId={propStoreId || 'unknown'}
+          versionId={currentVersionId || 'unknown'}
+          floorId={floor.id}
+          onClose={() => setShowQrDialogFor(null)}
+        />
+      )}
     </div>
   );
 }

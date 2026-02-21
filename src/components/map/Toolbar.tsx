@@ -29,6 +29,7 @@ const NODE_TYPES: { id: NodeType; label: string; color: string }[] = [
   { id: 'normal', label: 'Normal', color: '#00f0ff' },
   { id: 'entrance', label: 'Entrance', color: '#00ff88' },
   { id: 'section', label: 'Section', color: '#a855f7' },
+  { id: 'qr_anchor', label: 'QR Anchor', color: '#f59e0b' },
 ];
 
 export default function Toolbar({
@@ -67,8 +68,8 @@ export default function Toolbar({
             key={t.id}
             onClick={() => onToolChange(t.id)}
             className={`w-full h-10 rounded-lg flex items-center justify-center text-xs font-medium transition-all ${tool === t.id
-                ? 'bg-accent/20 text-accent border border-accent/40'
-                : 'text-white/50 hover:bg-white/5 hover:text-white/80 border border-transparent'
+              ? 'bg-accent/20 text-accent border border-accent/40'
+              : 'text-white/50 hover:bg-white/5 hover:text-white/80 border border-transparent'
               }`}
             title={t.label}
           >
@@ -88,8 +89,8 @@ export default function Toolbar({
               key={nt.id}
               onClick={() => onNodeTypeChange(nt.id)}
               className={`w-full h-8 rounded-lg flex items-center justify-center gap-1 text-[10px] font-medium transition-all ${nodeType === nt.id
-                  ? 'border border-white/30 bg-white/10'
-                  : 'text-white/40 hover:bg-white/5 border border-transparent'
+                ? 'border border-white/30 bg-white/10'
+                : 'text-white/40 hover:bg-white/5 border border-transparent'
                 }`}
               title={nt.label}
             >
@@ -115,8 +116,8 @@ export default function Toolbar({
         <button
           onClick={onToggleGrid}
           className={`w-full h-8 rounded-lg flex items-center justify-center text-[10px] font-medium transition-all ${showGrid
-              ? 'bg-white/10 text-white/80 border border-white/20'
-              : 'text-white/40 hover:bg-white/5 border border-transparent'
+            ? 'bg-white/10 text-white/80 border border-white/20'
+            : 'text-white/40 hover:bg-white/5 border border-transparent'
             }`}
           title="Toggle Grid"
         >
@@ -125,8 +126,8 @@ export default function Toolbar({
         <button
           onClick={onToggleSnap}
           className={`w-full h-8 rounded-lg flex items-center justify-center text-[10px] font-medium transition-all ${snapToGrid
-              ? 'bg-white/10 text-white/80 border border-white/20'
-              : 'text-white/40 hover:bg-white/5 border border-transparent'
+            ? 'bg-white/10 text-white/80 border border-white/20'
+            : 'text-white/40 hover:bg-white/5 border border-transparent'
             }`}
           title="Snap to Grid"
         >

@@ -140,6 +140,9 @@ export default function PathSimulator({
           <span className="text-accent font-medium">
             {simulatedDistance.toFixed(1)}m
           </span>
+          <span className="text-emerald-400 font-medium">
+            ~{Math.round(simulatedDistance / 1.4)}s walk
+          </span>
         </div>
       )}
     </div>
