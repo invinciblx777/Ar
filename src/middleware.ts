@@ -1,4 +1,5 @@
 import { createServerClient } from '@supabase/ssr';
+import { createClient } from '@supabase/supabase-js';
 import { NextResponse, type NextRequest } from 'next/server';
 
 export async function middleware(request: NextRequest) {
@@ -40,8 +41,20 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL('/admin/login', request.url));
     }
 
-    // Check admin role
-    const { data: profile } = await supabase
+    // Check admin role using service role key (bypasses RLS to avoid recursion)
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (!serviceKey) {
+      console.error('[Middleware] SUPABASE_SERVICE_ROLE_KEY not set');
+      return NextResponse.redirect(new URL('/', request.url));
+    }
+
+    const adminClient = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      serviceKey,
+      { auth: { autoRefreshToken: false, persistSession: false } }
+    );
+
+    const { data: profile } = await adminClient
       .from('users')
       .select('role')
       .eq('id', user.id)
