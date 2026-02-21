@@ -9,20 +9,29 @@ function AdminDashboardLayout({ children }: { children: React.ReactNode }) {
     const [userName, setUserName] = useState('');
     const [isCollapsed, setIsCollapsed] = useState(false);
     const router = useRouter();
-    const supabase = createSupabaseBrowserClient();
 
     useEffect(() => {
         async function loadUser() {
-            const { data: { user } } = await supabase.auth.getUser();
-            if (user) {
-                setUserName(user.email || 'Admin');
+            try {
+                const supabase = createSupabaseBrowserClient();
+                const { data: { user } } = await supabase.auth.getUser();
+                if (user) {
+                    setUserName(user.email || 'Admin');
+                }
+            } catch {
+                // Supabase not configured
             }
         }
         loadUser();
-    }, [supabase]);
+    }, []);
 
     async function handleLogout() {
-        await supabase.auth.signOut();
+        try {
+            const supabase = createSupabaseBrowserClient();
+            await supabase.auth.signOut();
+        } catch {
+            // ignore
+        }
         router.push('/admin/login');
     }
 

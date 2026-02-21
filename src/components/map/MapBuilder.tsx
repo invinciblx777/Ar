@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { findPath } from '@/ar/pathfinding';
@@ -17,7 +17,7 @@ export interface MapNode {
   x: number;
   z: number;
   floor_id: string;
-  type: 'normal' | 'entrance' | 'section';
+  type: 'normal' | 'entrance' | 'section' | 'qr_anchor';
   label: string | null;
 }
 
@@ -32,6 +32,9 @@ export interface MapSection {
   name: string;
   node_id: string;
   floor_id: string;
+  icon?: string;
+  description?: string;
+  category?: string;
 }
 
 interface FloorData {
@@ -44,7 +47,7 @@ interface FloorData {
 }
 
 export type Tool = 'select' | 'addNode' | 'connect' | 'delete';
-export type NodeType = 'normal' | 'entrance' | 'section';
+export type NodeType = 'normal' | 'entrance' | 'section' | 'qr_anchor';
 
 interface MapBuilderProps {
   storeId?: string;
@@ -54,7 +57,15 @@ interface MapBuilderProps {
 // ── Component ────────────────────────────────────────────────
 
 export default function MapBuilder({ storeId: propStoreId, versionId: propVersionId }: MapBuilderProps = {}) {
-  const supabase = createSupabaseBrowserClient();
+  const supabaseRef = useRef<ReturnType<typeof createSupabaseBrowserClient> | null>(null);
+  if (!supabaseRef.current) {
+    try {
+      supabaseRef.current = createSupabaseBrowserClient();
+    } catch {
+      // Will be handled in loadData
+    }
+  }
+  const supabase = supabaseRef.current!;
   const router = useRouter();
 
   // Data
@@ -185,6 +196,9 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
         name: s.name as string,
         node_id: s.node_id as string,
         floor_id: (s.floor_id as string) || floorId,
+        icon: (s.icon as string) || '',
+        description: (s.description as string) || '',
+        category: (s.category as string) || 'general',
       })
     );
     setSections(loadedSections);
@@ -327,6 +341,9 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
             name: s.name,
             node_id: s.node_id,
             floor_id: floorId,
+            icon: s.icon || null,
+            description: s.description || '',
+            category: s.category || 'general',
           }))
         );
         if (secErr) throw secErr;
@@ -511,14 +528,22 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
     setDirty(true);
   }
 
-  function handleCreateSection(nodeId: string, name: string) {
+  function handleCreateSection(
+    nodeId: string,
+    name: string,
+    metadata?: { icon?: string; description?: string; category?: string }
+  ) {
     if (!floor) return;
+    const existing = sections.find((s) => s.node_id === nodeId);
     const filtered = sections.filter((s) => s.node_id !== nodeId);
     filtered.push({
-      id: crypto.randomUUID(),
+      id: existing?.id || crypto.randomUUID(),
       name,
       node_id: nodeId,
       floor_id: floor.id,
+      icon: metadata?.icon || existing?.icon || '',
+      description: metadata?.description || existing?.description || '',
+      category: metadata?.category || existing?.category || 'general',
     });
     setSections(filtered);
     setNodes((prev) =>

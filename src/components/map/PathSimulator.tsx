@@ -112,6 +112,9 @@ export default function PathSimulator({
           <span className="text-accent font-medium">
             {simulatedDistance.toFixed(1)}m
           </span>
+          <span className="text-white/30">
+            ~{Math.ceil((simulatedDistance / 1.2) / 60)}min {Math.round((simulatedDistance / 1.2) % 60)}s
+          </span>
         </div>
       )}
     </div>

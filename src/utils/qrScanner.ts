@@ -14,6 +14,9 @@ async function loadJsQR(): Promise<typeof import('jsqr').default> {
 
 export interface QRScanResult {
     nodeId: string;
+    storeId?: string;
+    versionId?: string;
+    floorId?: string;
     raw: string;
 }
 
@@ -136,7 +139,13 @@ export class QRScanner {
                 const parsed = JSON.parse(code.data);
                 if (parsed.node_id && typeof parsed.node_id === 'string') {
                     this.stopScanning();
-                    onResult({ nodeId: parsed.node_id, raw: code.data });
+                    onResult({
+                        nodeId: parsed.node_id,
+                        storeId: parsed.store_id || undefined,
+                        versionId: parsed.version_id || undefined,
+                        floorId: parsed.floor_id || undefined,
+                        raw: code.data,
+                    });
                 } else {
                     // Valid QR but wrong format — ignore, keep scanning
                 }
