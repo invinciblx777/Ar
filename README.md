@@ -1,143 +1,250 @@
-# AR Store Navigator — MVP
+# AR Indoor Navigation Platform
 
-Browser-based AR navigation for retail stores. Select a store section, point your phone, and follow 3D arrows to your destination.
+Production-ready, multi-store indoor AR navigation SaaS platform. Customers select a store and destination, then follow real-time 3D waypoints through augmented reality to navigate any indoor space.
 
-**Cross-platform**: Works on Android Chrome (WebXR) and iOS Safari (Camera AR fallback).
-
-Built with **Next.js 15** • **TypeScript** • **TailwindCSS v4** • **Three.js** • **WebXR API** • **Supabase** • **Framer Motion**
+Built with **Next.js 16** · **TypeScript (strict)** · **TailwindCSS v4** · **Three.js** · **WebXR** · **Supabase** · **Framer Motion** · **React Konva**
 
 ---
 
-## Quick Start
+## Architecture
 
-### 1. Install Dependencies
+```
+┌─────────────────────────────────────────────────────┐
+│  Customer App (Mobile)                              │
+│  ├─ Store & Section Selection                       │
+│  ├─ WebXR immersive-ar (Android)                    │
+│  ├─ Camera + DeviceOrientation fallback (iOS)       │
+│  ├─ A* Pathfinding Engine                           │
+│  ├─ QR Anchor Recalibration                         │
+│  └─ Real-time 3D Waypoint Rendering                 │
+├─────────────────────────────────────────────────────┤
+│  Admin Dashboard (/admin)                           │
+│  ├─ Store CRUD (measurement-based auto-generation)  │
+│  ├─ Interactive Map Editor (React Konva)            │
+│  ├─ Version Control (draft → publish → revert)      │
+│  └─ 2D Path Simulation                             │
+├─────────────────────────────────────────────────────┤
+│  Backend                                            │
+│  ├─ Supabase (Postgres + Auth + Storage)            │
+│  ├─ Row Level Security                              │
+│  ├─ Service-role admin API routes                   │
+│  └─ Middleware auth for /admin                      │
+└─────────────────────────────────────────────────────┘
+```
+
+---
+
+## Setup Guide
+
+### Prerequisites
+
+- Node.js 18+
+- npm or pnpm
+- A Supabase project (free tier works)
+
+### Step 1 — Install Dependencies
 
 ```bash
 npm install
 ```
 
-### 2. Set Up Supabase (Optional)
-
-The app works without Supabase using fallback data. To enable the database:
-
-1. Create a Supabase project at [supabase.com](https://supabase.com)
-2. Run the SQL from `supabase-schema.sql` in the SQL Editor
-3. Copy `.env.local.example` to `.env.local` and fill in your credentials:
+### Step 2 — Configure Environment
 
 ```bash
-cp .env.local.example .env.local
+cp .env.example .env.local
 ```
+
+Fill in your Supabase credentials (Dashboard → Settings → API):
 
 ```env
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
-### 3. Run Locally
+### Step 3 — Set Up Database
+
+1. Open your Supabase project → **SQL Editor**
+2. Paste the contents of `supabase-migration.sql`
+3. Click **Run**
+
+This creates all tables (users, stores, store_versions, floors, navigation_nodes, navigation_edges, sections), RLS policies, indexes, triggers, and the `is_admin()` helper function.
+
+### Step 4 — Create Admin User
+
+1. Go to **Authentication → Users**
+2. Click **Add User**
+3. Email: `Invinciblx777@gmail.com`
+4. Set a strong password
+5. Check **Auto Confirm**
+6. Click **Create User**
+
+Then run this SQL to assign admin role:
+
+```sql
+UPDATE users SET role = 'admin'
+WHERE id = (
+  SELECT id FROM auth.users
+  WHERE email = 'invinciblx777@gmail.com'
+  LIMIT 1
+);
+```
+
+Verify:
+
+```sql
+SELECT u.id, au.email, u.role
+FROM users u
+JOIN auth.users au ON au.id = u.id
+WHERE au.email = 'invinciblx777@gmail.com';
+```
+
+### Step 5 — Create Storage Bucket (Optional)
+
+For floorplan image uploads:
+
+1. Go to **Storage → New Bucket**
+2. Name: `floorplans`, Public: `true`
+3. Run the storage policies from the bottom of `supabase-migration.sql`
+
+### Step 6 — Run Locally
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000)
 
-### 4. Run with HTTPS (Required for AR)
+### Step 7 — Run with HTTPS (Required for AR)
 
-Both WebXR and `getUserMedia` require HTTPS. Next.js has built-in experimental HTTPS support:
+WebXR and `getUserMedia` require HTTPS:
 
 ```bash
 npx next dev --experimental-https
 ```
 
-Accept the self-signed certificate warning in your browser.
+Accept the self-signed certificate warning.
 
 ---
 
-## Cross-Platform AR Support
+## Admin Dashboard
 
-| Platform | AR Mode | How It Works |
-|----------|---------|-------------|
-| **Android Chrome** | WebXR `immersive-ar` | True WebXR session with 6DoF tracking |
-| **iOS Safari** | Camera AR Fallback | `getUserMedia` camera + `deviceorientation` compass + Three.js overlay |
-| **iOS Chrome** | Camera AR Fallback | Same as iOS Safari (WebKit engine) |
-| **Desktop** | Not supported | Shows "Mobile Device Required" message |
+Access at `/admin/login`. Sign in with your admin credentials.
 
-The app automatically detects device capabilities and chooses the best AR mode.
+### Store Creation
 
----
+1. Click **Create Store**
+2. Enter store name and measurements (length, width, aisle count, aisle width, corridor spacing)
+3. The system auto-generates a walkable grid with navigation nodes, edges, and an entrance at (0,0)
+4. 1 meter = 1 logical unit
 
-## Testing on Android Chrome
+### Map Editor
 
-### Prerequisites
+The interactive React Konva editor lets you:
 
-- ARCore-compatible Android device
-- Chrome 81+ installed
+- Add/delete nodes
+- Connect/disconnect edges
+- Mark nodes as entrance or section
+- Create named sections
+- Toggle snap-to-grid
+- Toggle grid visibility
 
-### Steps
+All changes persist to Supabase in real-time.
 
-1. **Deploy to Vercel** (easiest) — see below
-2. Open the Vercel URL on your Android Chrome
-3. Select a store section from the dropdown
-4. Tap **"Start AR Navigation"**
-5. Accept camera permission
-6. Point your phone at the floor — a cyan arrow appears pointing toward your destination
-7. Walk around — the arrow updates direction in real-time
+### Version Control
 
-### WebXR Chrome Flags (if needed)
+- Editing creates a **draft** version
+- Click **Publish** to make it live (only one published version per store)
+- **Clone** creates a new draft from any version
+- **Revert** rolls back to a previous version
+- AR system always uses the published version
 
-If AR doesn't start, enable these flags in `chrome://flags`:
+### Path Simulation
 
-- `#webxr-incubations` → Enabled
-- `#webxr-ar-module` → Enabled (if available)
-
-Restart Chrome after changing flags.
-
----
-
-## Testing on iPhone Safari
-
-### Prerequisites
-
-- iPhone with iOS 13+ (for DeviceOrientation permission API)
-- Safari or Chrome (both use WebKit on iOS)
-
-### Steps
-
-1. Deploy to **Vercel** (HTTPS is required — no self-signed certs on iOS)
-2. Open the Vercel URL in **Safari**
-3. Select a store section from the dropdown
-4. Tap **"Start AR Navigation"**
-5. **Accept camera permission** when prompted
-6. **Accept motion permission** if prompted (iOS 13+)
-7. The rear camera feed appears as background with a 3D arrow overlaid
-8. Rotate your phone — the arrow updates direction based on compass heading
-
-### Enabling Motion Permissions on iOS
-
-If motion doesn't work:
-
-1. Open **Settings → Safari → Privacy & Security**
-2. Ensure **Motion & Orientation Access** is enabled
-3. Reload the page and try again
-
-### Notes
-
-- iOS uses camera overlay mode (not true WebXR) since Safari doesn't support `immersive-ar`
-- Arrow rotation is based on device compass heading via `DeviceOrientationEvent`
-- The experience feels like real AR but uses sensor fusion rather than spatial tracking
+- Select start node and target section
+- System runs A* and highlights the route on the 2D canvas
+- Uses the same pathfinding engine as the AR system
 
 ---
 
-## Deploy to Vercel
+## AR Customer Experience
+
+### Flow
+
+1. Customer selects a store
+2. Customer selects a destination section
+3. Customer scans a QR code OR starts at the entrance
+4. AR session begins
+
+### Android (WebXR)
+
+- Uses `navigator.xr.requestSession('immersive-ar')`
+- Full 6DOF tracking with real-world anchoring
+- Waypoint markers placed in world space
+- Smooth arrow rotation interpolation toward next waypoint
+
+### iOS (Fallback)
+
+- `getUserMedia` rear camera feed
+- `DeviceOrientationEvent` compass tracking
+- Three.js scene overlaid on camera
+- 3DOF orientation tracking
+- Position updates via QR code scanning
+
+### AR Features
+
+- Cyan waypoint spheres along the path
+- Pulsing active waypoint indicator
+- Lead arrow pointing to next waypoint
+- Progress bar showing navigation progress
+- Automatic route recalculation if deviation > 1.5m
+- QR code scanning for position recalibration
+- Clean XR session cleanup on exit
+
+---
+
+## QR Anchor System
+
+QR codes placed throughout the store contain a `node_id`. When scanned:
+
+1. Camera feed is analyzed frame-by-frame using jsQR
+2. QR data is parsed (JSON with `node_id` or raw string)
+3. User position is set to the corresponding node
+4. Coordinate origin is recalibrated
+5. Path is recalculated from the new position
+
+---
+
+## Cross-Platform Support
+
+| Platform | AR Mode | Tracking |
+|---|---|---|
+| Android Chrome 81+ | WebXR `immersive-ar` | 6DOF (full spatial) |
+| iOS Safari 13+ | Camera + Orientation | 3DOF (compass heading) |
+| iOS Chrome | Camera + Orientation | 3DOF (compass heading) |
+| Desktop | Not supported | Shows warning |
+
+---
+
+## Deployment (Vercel)
+
+### Option A — CLI
 
 ```bash
 npm i -g vercel
 vercel
 ```
 
-Or push to GitHub and import on [vercel.com/new](https://vercel.com/new).
+### Option B — GitHub
 
-> **Env vars**: Add `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` in Vercel dashboard → Settings → Environment Variables.
+1. Push to GitHub
+2. Import at [vercel.com/new](https://vercel.com/new)
+3. Add environment variables in Vercel Dashboard → Settings → Environment Variables:
+   - `NEXT_PUBLIC_SUPABASE_URL`
+   - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `SUPABASE_SERVICE_ROLE_KEY`
+
+HTTPS is enforced by default on Vercel.
 
 ---
 
@@ -146,53 +253,92 @@ Or push to GitHub and import on [vercel.com/new](https://vercel.com/new).
 ```
 src/
 ├── app/
-│   ├── layout.tsx              # Root layout (dark mode, fonts, SEO)
-│   ├── page.tsx                # Landing page
-│   ├── globals.css             # Global styles (glassmorphism, neon glow)
-│   └── ar/
-│       └── page.tsx            # AR navigation page (cross-platform)
+│   ├── layout.tsx                    # Root layout (dark theme, fonts, viewport)
+│   ├── page.tsx                      # Landing page (store + section selector)
+│   ├── globals.css                   # Design system (glassmorphism, admin)
+│   ├── ar/page.tsx                   # AR navigation page
+│   ├── admin/
+│   │   ├── login/page.tsx            # Admin login
+│   │   ├── layout.tsx                # Admin shell (sidebar + topbar)
+│   │   ├── dashboard/page.tsx        # Store management grid
+│   │   ├── stores/[id]/page.tsx      # Store detail + versions
+│   │   └── stores/[id]/versions/     # Map builder entry
+│   └── api/
+│       ├── admin/stores/route.ts     # Store CRUD + version operations
+│       ├── admin/create-store/route.ts # Store creation + grid generation
+│       └── check-admin/route.ts      # Admin role verification
 ├── ar/
-│   ├── ARScene.ts              # WebXR immersive-ar engine (Android)
-│   ├── FallbackARScene.ts      # Camera + orientation fallback (iOS)
-│   └── ArrowModel.ts           # Procedural 3D arrow model
+│   ├── ARScene.ts                    # WebXR AR engine (Android)
+│   ├── FallbackARScene.ts            # Camera AR engine (iOS)
+│   ├── navigationEngine.ts           # A* pathfinding + state tracking
+│   ├── pathfinding.ts                # A* algorithm + priority queue
+│   ├── coordinateMapper.ts           # Map ↔ AR coordinate conversion
+│   └── WaypointRenderer.ts           # Three.js 3D waypoint rendering
 ├── components/
-│   ├── HeroSection.tsx         # Animated hero
-│   ├── SectionSelector.tsx     # Destination dropdown
-│   ├── StartButton.tsx         # CTA button
-│   ├── FeatureCards.tsx        # Feature grid
-│   └── ErrorOverlay.tsx        # Error/loading/permission states
+│   ├── HeroSection.tsx               # Animated landing hero
+│   ├── StoreSelector.tsx             # Multi-store dropdown
+│   ├── SectionSelector.tsx           # Section/destination picker
+│   ├── StartButton.tsx               # AR launch button
+│   ├── FeatureCards.tsx              # Feature showcase
+│   ├── ErrorOverlay.tsx              # Error/loading states
+│   ├── DebugOverlay.tsx              # Dev debug canvas
+│   ├── admin/                        # Admin UI components
+│   └── map/                          # Map editor components
 ├── lib/
-│   ├── supabase.ts             # Supabase client
-│   └── sections.ts             # Section data fetching
-└── utils/
-    ├── detectARSupport.ts      # Structured AR capability detection
-    ├── device.ts               # Device detection (iOS, Android, mobile)
-    └── navigation.ts           # Direction math
+│   ├── mapData.ts                    # Navigation graph types + fetching
+│   ├── sections.ts                   # Section data + store-specific fetching
+│   ├── gridGenerator.ts              # Auto-grid from measurements
+│   ├── versionManager.ts             # Version lifecycle management
+│   ├── supabaseClient.ts             # Browser Supabase client
+│   ├── supabaseAdmin.ts              # Server admin client (service role)
+│   └── supabase/                     # SSR Supabase utilities
+├── utils/
+│   ├── detectARSupport.ts            # AR capability detection
+│   ├── device.ts                     # Platform detection
+│   ├── navigation.ts                 # Distance/angle math
+│   └── qrScanner.ts                  # QR code scanner
+└── middleware.ts                      # Admin route protection
 ```
 
 ---
 
-## Store Sections (Default)
+## Security
 
-| Section     | X (meters) | Z (meters) |
-|------------|-----------|-----------|
-| Billing     | 0         | 8         |
-| Electronics | 6         | 4         |
-| Groceries   | -5        | 6         |
-| Clothing    | 4         | -3        |
-
-Entrance is at (0, 0). Coordinates are relative to the entrance.
+- No hardcoded credentials anywhere in the codebase
+- Supabase Auth for authentication
+- Role-based access via `users.role` column
+- `is_admin()` SECURITY DEFINER function prevents RLS recursion
+- RLS policies on all tables (stores, store_versions, floors, navigation_nodes, navigation_edges, sections)
+- Middleware protection for all `/admin` routes
+- Server-side session validation via cookies
+- Service role key used only in server-side API routes (never exposed to browser)
+- Admin account created manually via Supabase dashboard (no automated setup endpoint)
 
 ---
 
-## Tech
+## Testing Checklist
 
-- **Android**: WebXR `immersive-ar` with `local-floor` reference space
-- **iOS**: `getUserMedia` camera feed + `DeviceOrientationEvent` compass heading + Three.js overlay
-- **Three.js** for 3D rendering (procedural arrow, no external models)
-- **Vector math** for direction calculation (`atan2`)
-- Neon cyan arrow with emissive glow + floating animation
-- Automatic capability detection routes to the best available AR mode
+- [ ] Admin login with correct credentials → redirected to dashboard
+- [ ] Admin login with wrong credentials → error shown
+- [ ] Non-admin user → redirected away from /admin
+- [ ] Create store with measurements → grid auto-generated
+- [ ] Open map editor → nodes and edges visible
+- [ ] Add/delete nodes in editor → changes persist
+- [ ] Connect/disconnect edges → changes persist
+- [ ] Create section on a node → section saved
+- [ ] Publish version → `is_published = true`, others unpublished
+- [ ] Clone version → new draft created with all data
+- [ ] Revert to older version → creates new draft from that version
+- [ ] Path simulation → A* route highlighted on canvas
+- [ ] Customer selects store → sections load for that store
+- [ ] Customer selects section → "Start AR" button enabled
+- [ ] AR on Android → WebXR session starts, waypoints visible
+- [ ] AR on iOS → Camera feed + compass-rotated waypoints
+- [ ] QR scan during AR → position recalibrated, path updated
+- [ ] Walk past waypoint → waypoint removed, progress updated
+- [ ] Deviate > 1.5m → path automatically recalculated
+- [ ] Exit AR → resources cleaned up, no memory leaks
+- [ ] Desktop → "Mobile Device Required" message shown
 
 ---
 

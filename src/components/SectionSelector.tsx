@@ -2,14 +2,16 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Section, fetchSections } from '../lib/sections';
+import { Section, fetchSections, fetchSectionsForStore } from '../lib/sections';
 
 interface SectionSelectorProps {
+    storeId?: string | null;
     onSelect: (section: Section) => void;
     selected: Section | null;
 }
 
 export default function SectionSelector({
+    storeId,
     onSelect,
     selected,
 }: SectionSelectorProps) {
@@ -19,11 +21,15 @@ export default function SectionSelector({
     const dropdownRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        fetchSections().then((data) => {
+        setIsLoading(true);
+        const loader = storeId
+            ? fetchSectionsForStore(storeId)
+            : fetchSections();
+        loader.then((data) => {
             setSections(data);
             setIsLoading(false);
         });
-    }, []);
+    }, [storeId]);
 
     useEffect(() => {
         function handleClickOutside(e: MouseEvent) {

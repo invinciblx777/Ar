@@ -12,7 +12,7 @@ import type { NavigationNode } from '@/lib/mapData';
 const NODE_COLORS: Record<string, string> = {
   normal: '#00f0ff',
   entrance: '#00ff88',
-  section: '#ff8800',
+  section: '#a855f7',
 };
 
 const NODE_RADIUS = 8;
@@ -60,6 +60,8 @@ export default function MapCanvas({
   const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
   const [stagePos, setStagePos] = useState<{ x: number; y: number } | null>(null);
   const [stageScale, setStageScale] = useState(1);
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
 
   // Resize observer
   useEffect(() => {
@@ -207,6 +209,9 @@ export default function MapCanvas({
   const gridLines = generateGridLines();
   const currentStagePos = stagePos || { x: dimensions.width / 2, y: 60 };
 
+  // Find hovered node for tooltip
+  const hoveredNode = hoveredNodeId ? nodes.find(n => n.id === hoveredNodeId) : null;
+
   return (
     <div
       ref={containerRef}
@@ -274,14 +279,15 @@ export default function MapCanvas({
             const a = nodes.find((n) => n.id === edge.nodeA);
             const b = nodes.find((n) => n.id === edge.nodeB);
             if (!a || !b) return null;
+            const isHovered = hoveredEdgeId === edge.id;
             return (
               <Line
                 key={edge.id}
                 points={[a.x * ppm, a.z * ppm, b.x * ppm, b.z * ppm]}
-                stroke="#00f0ff"
-                strokeWidth={2}
+                stroke={isHovered ? '#facc15' : '#00f0ff'}
+                strokeWidth={isHovered ? 3 : 2}
                 hitStrokeWidth={14}
-                opacity={0.5}
+                opacity={isHovered ? 0.9 : 0.5}
                 onClick={(e) => {
                   e.cancelBubble = true;
                   onEdgeClick(edge.id);
@@ -290,6 +296,8 @@ export default function MapCanvas({
                   e.cancelBubble = true;
                   onEdgeClick(edge.id);
                 }) as any}
+                onMouseEnter={() => setHoveredEdgeId(edge.id)}
+                onMouseLeave={() => setHoveredEdgeId(null)}
               />
             );
           })}
@@ -312,22 +320,35 @@ export default function MapCanvas({
           {nodes.map((node) => {
             const isSelected = selectedNodeId === node.id;
             const isConnectSource = connectFromId === node.id;
+            const isHovered = hoveredNodeId === node.id;
             const px = node.x * ppm;
             const pz = node.z * ppm;
+            const nodeColor = NODE_COLORS[node.type] || NODE_COLORS.normal;
 
             return (
               <Group key={node.id}>
-                {/* Selection ring */}
+                {/* Glow ring for selected node */}
                 {isSelected && (
-                  <Circle
-                    x={px}
-                    y={pz}
-                    radius={NODE_RADIUS + 5}
-                    stroke="#ffffff"
-                    strokeWidth={2}
-                    opacity={0.7}
-                    listening={false}
-                  />
+                  <>
+                    <Circle
+                      x={px}
+                      y={pz}
+                      radius={NODE_RADIUS + 8}
+                      stroke={nodeColor}
+                      strokeWidth={1.5}
+                      opacity={0.3}
+                      listening={false}
+                    />
+                    <Circle
+                      x={px}
+                      y={pz}
+                      radius={NODE_RADIUS + 5}
+                      stroke="#ffffff"
+                      strokeWidth={2}
+                      opacity={0.7}
+                      listening={false}
+                    />
+                  </>
                 )}
 
                 {/* Connect source indicator */}
@@ -343,17 +364,30 @@ export default function MapCanvas({
                   />
                 )}
 
+                {/* Hover ring */}
+                {isHovered && !isSelected && (
+                  <Circle
+                    x={px}
+                    y={pz}
+                    radius={NODE_RADIUS + 4}
+                    stroke={nodeColor}
+                    strokeWidth={1}
+                    opacity={0.5}
+                    listening={false}
+                  />
+                )}
+
                 {/* Node circle */}
                 <Circle
                   x={px}
                   y={pz}
                   radius={NODE_RADIUS}
-                  fill={NODE_COLORS[node.type] || NODE_COLORS.normal}
+                  fill={nodeColor}
                   stroke={isSelected ? '#ffffff' : 'transparent'}
                   strokeWidth={1.5}
-                  shadowColor={NODE_COLORS[node.type] || NODE_COLORS.normal}
-                  shadowBlur={isSelected ? 12 : 6}
-                  shadowOpacity={0.5}
+                  shadowColor={nodeColor}
+                  shadowBlur={isSelected ? 16 : isHovered ? 10 : 6}
+                  shadowOpacity={isSelected ? 0.7 : 0.5}
                   onClick={(e) => {
                     e.cancelBubble = true;
                     onNodeClick(node.id);
@@ -367,6 +401,8 @@ export default function MapCanvas({
                     const target = e.target;
                     onNodeDrag(node.id, target.x() / ppm, target.y() / ppm);
                   }}
+                  onMouseEnter={() => setHoveredNodeId(node.id)}
+                  onMouseLeave={() => setHoveredNodeId(null)}
                 />
 
                 {/* Entrance icon */}
@@ -378,6 +414,19 @@ export default function MapCanvas({
                     fontSize={9}
                     fontStyle="bold"
                     fill="#000"
+                    listening={false}
+                  />
+                )}
+
+                {/* Section icon */}
+                {node.type === 'section' && (
+                  <Text
+                    x={px - 4}
+                    y={pz - 4}
+                    text="S"
+                    fontSize={9}
+                    fontStyle="bold"
+                    fill="#fff"
                     listening={false}
                   />
                 )}
@@ -394,6 +443,44 @@ export default function MapCanvas({
               </Group>
             );
           })}
+
+          {/* Tooltip for hovered node */}
+          {hoveredNode && (
+            <Group
+              x={hoveredNode.x * ppm + NODE_RADIUS + 10}
+              y={hoveredNode.z * ppm - 30}
+              listening={false}
+            >
+              <Rect
+                x={0}
+                y={0}
+                width={120}
+                height={42}
+                fill="#1a1a2e"
+                stroke="rgba(255,255,255,0.15)"
+                strokeWidth={1}
+                cornerRadius={6}
+                shadowColor="#000"
+                shadowBlur={8}
+                shadowOpacity={0.3}
+              />
+              <Text
+                x={8}
+                y={6}
+                text={hoveredNode.label || hoveredNode.type.charAt(0).toUpperCase() + hoveredNode.type.slice(1)}
+                fontSize={10}
+                fontStyle="bold"
+                fill="#e0e0e0"
+              />
+              <Text
+                x={8}
+                y={22}
+                text={`(${hoveredNode.x.toFixed(1)}, ${hoveredNode.z.toFixed(1)}) · ${hoveredNode.type}`}
+                fontSize={9}
+                fill="#888"
+              />
+            </Group>
+          )}
         </Layer>
       </Stage>
 

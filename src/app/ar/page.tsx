@@ -7,8 +7,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { ARScene } from '../../ar/ARScene';
 import { FallbackARScene } from '../../ar/FallbackARScene';
 // Systems
-import { fetchNavigationGraph, fetchNavigationGraphForStore, type NavigationGraph } from '../../lib/mapData';
-import { getSectionById, type Section } from '../../lib/sections';
+import { fetchNavigationGraph, fetchNavigationGraphForStore, type NavigationGraph, type StoreSection } from '../../lib/mapData';
+import { type Section } from '../../lib/sections';
 import { detectARSupport, type ARSupportInfo } from '../../utils/detectARSupport';
 import { formatDistance } from '../../utils/navigation';
 import { QRScanner, type QRScanResult } from '../../utils/qrScanner';
@@ -34,9 +34,7 @@ function ARPageContent() {
     const containerRef = useRef<HTMLDivElement>(null);
     const cameraContainerRef = useRef<HTMLDivElement>(null); // For QR Scanner
 
-    // Using any for flexibility between ARScene and FallbackARScene
-    // In production you might want a common interface
-    const arSceneRef = useRef<any>(null);
+    const arSceneRef = useRef<ARScene | FallbackARScene | null>(null);
     const qrScannerRef = useRef<QRScanner | null>(null);
 
     const [status, setStatus] = useState<ARStatus>('loading');
@@ -122,55 +120,15 @@ function ARPageContent() {
         console.log('[QR] Scanned:', result);
         stopQRScan();
 
-        // Recalibrate AR Scene
         if (arSceneRef.current && graph) {
             const node = graph.nodes.get(result.nodeId);
             if (node) {
-                // Determine current AR position (if needed by scene)
-                // For Fallback, it assumes 0,0,0
-                // For WebXR, we need to pass current camera pos if we want precise offset
-                // But for simplicity, we assume user is STANDING at the anchor when scanning
-
-                // We'll let the scene handle it
-                if (arMode === 'webxr') {
-                    // ARScene needs 'currentARPosition' to calibrate offset
-                    // We can't easily get it from outside without exposing it
-                    // HACK: Pass {x:0, z:0} allows ARScene to just assume user is at 0,0 relative to... something?
-                    // Actually ARScene.recalibrateFromNode uses the passed position.
-                    // IMPORTANT: We need the camera position from the RENDER LOOP.
-                    // Since we can't access it here easily, we might need the Scene to handle QR logic?
-                    // OR, simpler: We set a flag in ARScene "pendingRecalibration = nodeId".
-                    // Let's call the method we added.
-
-                    // Ideally we pass the camera position. 
-                    // Since this is MVP upgraded, let's assume the user is at (0,0,0) in AR space 
-                    // OR rely on the fact that they just started or are standing still.
-                    // Actually, in WebXR world coordinates are persistent.
-                    // So passing {x: cameraX, z: cameraX} is vital.
-                    // We don't have it here. 
-
-                    // New plan: We trigger a "recalibrateNextFrame(nodeId)" on the scene.
-                    // I'll cast to any and call recalibrateFromNode if possible, 
-                    // passing a dummy that the scene might override or I'll update ARScene to take just ID and use current cam pos.
-                    // I'll update ARScene to use its OWN camera position if I didn't already.
-                    // I checked ARScene code: `recalibrateFromNode(nodeId, currentARPosition)`.
-                    // I should have made `currentARPosition` optional and let ARScene use `this.camera.position`.
-                    // Let's assume I can pass `arSceneRef.current.camera.position`.
-
-                    const cam = arSceneRef.current.camera;
-                    arSceneRef.current.recalibrateFromNode(result.nodeId, { x: cam.position.x, z: cam.position.z });
-                } else {
-                    // Fallback
-                    arSceneRef.current.recalibrateFromNode(result.nodeId);
-                }
-
-                // Show success toast?
-                alert(`Re-anchored to: ${node.label || 'Node ' + node.id}`);
-            } else {
-                alert('Invalid QR Code: Node not found');
+                // Both ARScene and FallbackARScene expose recalibrateFromNode
+                // ARScene now uses its internal camera position automatically
+                arSceneRef.current.recalibrateFromNode(result.nodeId);
             }
         }
-    }, [arMode, graph, stopQRScan]);
+    }, [graph, stopQRScan]);
 
     // ── AR Initialization ────────────────────────────────────────
 
@@ -220,10 +178,8 @@ function ARPageContent() {
                 onDistanceUpdate: (d: number) => setDistance(d),
                 onStateUpdate: (state: NavigationState) => {
                     setNavState(state);
-                    // Update user pos for debug
-                    if (arSceneRef.current?.navEngine) {
-                        const pos = arSceneRef.current.navEngine.getUserPosition();
-                        setUserPosition({ x: pos.x, z: pos.z });
+                    if (state.userPosition) {
+                        setUserPosition({ x: state.userPosition.x, z: state.userPosition.z });
                     }
                 },
                 onNavigationEvent: (event: NavigationEvent) => {
@@ -311,15 +267,15 @@ function ARPageContent() {
         };
     }, [sectionId, handleBack, initAR]);
 
-    // Helper to match shared Section interface
-    function flattenSection(s: any): Section | undefined {
+    function flattenSection(s: StoreSection | undefined): Section | undefined {
         if (!s) return undefined;
         return {
             id: s.id,
             name: s.name,
             node_id: s.node_id,
             icon: s.icon,
-            x: 0, z: 0 // coordinates not strictly needed by UI now
+            x: 0,
+            z: 0,
         };
     }
 

@@ -52,13 +52,13 @@ interface WaypointMarker {
 // ── Renderer ───────────────────────────────────────────────────
 
 export class WaypointRenderer {
-    private scene: THREE.Scene;
+    private scene: THREE.Object3D;
     private markers: WaypointMarker[] = [];
     private pathLine: THREE.Line | null = null;
     private leadArrowGroup: THREE.Group | null = null;
     private currentTargetAngle = 0;
 
-    constructor(scene: THREE.Scene) {
+    constructor(scene: THREE.Object3D) {
         this.scene = scene;
     }
 

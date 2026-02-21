@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { findPath } from '@/ar/pathfinding';
@@ -38,7 +38,6 @@ interface FloorData {
   id: string;
   name: string;
   level_number: number;
-  store_id: string | null;
   store_version_id: string | null;
   floorplan_image_url: string | null;
 }
@@ -54,7 +53,8 @@ interface MapBuilderProps {
 // ── Component ────────────────────────────────────────────────
 
 export default function MapBuilder({ storeId: propStoreId, versionId: propVersionId }: MapBuilderProps = {}) {
-  const supabase = createSupabaseBrowserClient();
+  // Memoize Supabase client so it's created once per component lifecycle
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const router = useRouter();
 
   // Data
@@ -63,6 +63,7 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
   const [edges, setEdges] = useState<MapEdge[]>([]);
   const [sections, setSections] = useState<MapSection[]>([]);
   const [storeName, setStoreName] = useState('');
+  const [currentVersionId, setCurrentVersionId] = useState<string | null>(null);
 
   // UI
   const [tool, setTool] = useState<Tool>('select');
@@ -83,6 +84,9 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
   const [dirty, setDirty] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
 
+  // Ref to track if initial load has happened
+  const loadedRef = useRef(false);
+
   // ── Data Loading ─────────────────────────────────────────────
 
   useEffect(() => {
@@ -93,9 +97,10 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
   async function loadData() {
     setLoading(true);
     try {
-      // If we have a version ID, load data for that version
       if (propVersionId) {
-        // Load store name
+        // ── Version-based loading (from store detail page) ──
+        console.log('[MapBuilder] Loading with versionId:', propVersionId, 'storeId:', propStoreId);
+
         if (propStoreId) {
           const { data: store } = await supabase
             .from('stores')
@@ -104,6 +109,8 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
             .single();
           if (store) setStoreName(store.name);
         }
+
+        setCurrentVersionId(propVersionId);
 
         // Get floor for this version
         let { data: floors } = await supabase
@@ -115,7 +122,8 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
 
         if (!floors || floors.length === 0) {
           // Create a default floor for this version
-          const { data: newFloor } = await supabase
+          console.log('[MapBuilder] No floor found, creating default floor for version:', propVersionId);
+          const { data: newFloor, error: floorError } = await supabase
             .from('floors')
             .insert({
               name: 'Ground Floor',
@@ -124,134 +132,153 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
             })
             .select()
             .single();
+          if (floorError) {
+            console.error('[MapBuilder] Failed to create floor:', floorError);
+            setStatusMsg(`Failed to create floor: ${floorError.message}`);
+            setLoading(false);
+            return;
+          }
           if (newFloor) floors = [newFloor];
         }
 
         if (floors && floors.length > 0) {
-          const currentFloor = floors[0];
+          const currentFloor: FloorData = {
+            id: floors[0].id,
+            name: floors[0].name,
+            level_number: floors[0].level_number,
+            store_version_id: floors[0].store_version_id,
+            floorplan_image_url: floors[0].floorplan_image_url,
+          };
           setFloor(currentFloor);
           await loadFloorData(currentFloor.id);
         }
       } else {
-        // Legacy mode: load first store/floor
+        // ── Legacy mode: auto-create store → version → floor chain ──
+        console.log('[MapBuilder] Loading in legacy mode (no versionId provided)');
         await loadLegacyData();
       }
     } catch (err) {
-      console.error('Failed to load map data:', err);
+      console.error('[MapBuilder] Failed to load map data:', err);
       setStatusMsg('Failed to load data');
     } finally {
       setLoading(false);
+      loadedRef.current = true;
     }
   }
 
   async function loadFloorData(floorId: string) {
-    const [nodesRes, edgesRes, sectionsRes] = await Promise.all([
-      supabase.from('navigation_nodes').select('*').eq('floor_id', floorId),
-      supabase.from('navigation_edges').select('*').eq('floor_id', floorId),
-      supabase.from('sections').select('*').eq('floor_id', floorId),
-    ]);
+    console.log('[MapBuilder] Loading floor data for floorId:', floorId);
 
-    // Transform nodes
-    const loadedNodes: MapNode[] = (nodesRes.data || []).map((n: Record<string, unknown>) => ({
-      id: n.id as string,
-      x: n.x as number,
-      z: n.z as number,
-      floor_id: n.floor_id as string,
-      type: ((n.type as string) || 'normal') as MapNode['type'],
-      label: n.label as string | null,
-    }));
-    setNodes(loadedNodes);
+    try {
+      const res = await fetch('/api/admin/map-builder-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'loadFloorData', floorId }),
+      });
 
-    // Deduplicate edges
-    const seenEdgePairs = new Set<string>();
-    const loadedEdges: MapEdge[] = [];
-    for (const e of edgesRes.data || []) {
-      const key = [e.from_node, e.to_node].sort().join('|');
-      if (!seenEdgePairs.has(key)) {
-        seenEdgePairs.add(key);
-        loadedEdges.push({
-          id: e.id,
-          nodeA: e.from_node,
-          nodeB: e.to_node,
-        });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        console.error('[MapBuilder] Load floor data failed:', data.error);
+        setStatusMsg(`Failed to load floor data: ${data.error || 'Unknown error'}`);
+        return;
       }
+
+      // Transform nodes
+      const loadedNodes: MapNode[] = (data.nodes || []).map((n: Record<string, unknown>) => ({
+        id: n.id as string,
+        x: n.x as number,
+        z: n.z as number,
+        floor_id: n.floor_id as string,
+        type: ((n.type as string) || 'normal') as MapNode['type'],
+        label: n.label as string | null,
+      }));
+      setNodes(loadedNodes);
+
+      // Deduplicate edges
+      const seenEdgePairs = new Set<string>();
+      const loadedEdges: MapEdge[] = [];
+      for (const e of data.edges || []) {
+        const key = [e.from_node, e.to_node].sort().join('|');
+        if (!seenEdgePairs.has(key)) {
+          seenEdgePairs.add(key);
+          loadedEdges.push({
+            id: e.id,
+            nodeA: e.from_node,
+            nodeB: e.to_node,
+          });
+        }
+      }
+      setEdges(loadedEdges);
+
+      // Sections
+      const loadedSections: MapSection[] = (data.sections || []).map(
+        (s: Record<string, unknown>) => ({
+          id: s.id as string,
+          name: s.name as string,
+          node_id: s.node_id as string,
+          floor_id: (s.floor_id as string) || floorId,
+        })
+      );
+      setSections(loadedSections);
+
+      console.log('[MapBuilder] Loaded:', {
+        nodes: loadedNodes.length,
+        edges: loadedEdges.length,
+        sections: loadedSections.length,
+        floor_id: floorId,
+      });
+      setStatusMsg(`Loaded ${loadedNodes.length} nodes, ${loadedEdges.length} edges`);
+    } catch (err) {
+      console.error('[MapBuilder] Load floor data failed:', err);
+      setStatusMsg('Failed to load floor data — check console');
     }
-    setEdges(loadedEdges);
-
-    // Sections
-    const loadedSections: MapSection[] = (sectionsRes.data || []).map(
-      (s: Record<string, unknown>) => ({
-        id: s.id as string,
-        name: s.name as string,
-        node_id: s.node_id as string,
-        floor_id: (s.floor_id as string) || floorId,
-      })
-    );
-    setSections(loadedSections);
-
-    setStatusMsg(`Loaded ${loadedNodes.length} nodes, ${loadedEdges.length} edges`);
   }
 
   async function loadLegacyData() {
-    // Get or create store
-    let { data: stores } = await supabase
-      .from('stores')
-      .select('*')
-      .limit(1);
+    // Use server-side API to create store/version/floor chain
+    // This bypasses RLS policies using the service role key
+    console.log('[MapBuilder] Initializing via server-side API...');
+    setStatusMsg('Initializing map data...');
 
-    let currentStoreId: string;
-    if (!stores || stores.length === 0) {
-      const { data: newStore } = await supabase
-        .from('stores')
-        .insert({ name: 'My Store' })
-        .select()
-        .single();
-      currentStoreId = newStore!.id;
-    } else {
-      currentStoreId = stores[0].id;
-      setStoreName(stores[0].name);
-    }
+    try {
+      const res = await fetch('/api/admin/map-builder-init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
 
-    // Get or create floor
-    let { data: floors } = await supabase
-      .from('floors')
-      .select('*')
-      .eq('store_id', currentStoreId)
-      .order('level_number')
-      .limit(1);
-
-    let currentFloor: FloorData;
-    if (!floors || floors.length === 0) {
-      const { data: legacyFloors } = await supabase
-        .from('floors')
-        .select('*')
-        .is('store_id', null)
-        .order('level_number')
-        .limit(1);
-
-      if (legacyFloors && legacyFloors.length > 0) {
-        await supabase
-          .from('floors')
-          .update({ store_id: currentStoreId })
-          .eq('id', legacyFloors[0].id);
-        currentFloor = { ...legacyFloors[0], store_id: currentStoreId };
-      } else {
-        const { data: newFloor } = await supabase
-          .from('floors')
-          .insert({
-            name: 'Ground Floor',
-            level_number: 0,
-            store_id: currentStoreId,
-          })
-          .select()
-          .single();
-        currentFloor = newFloor!;
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({ error: 'Unknown error' }));
+        console.error('[MapBuilder] Init API failed:', errData);
+        setStatusMsg(`Initialization failed: ${errData.error || res.statusText}`);
+        return;
       }
-    } else {
-      currentFloor = floors[0];
+
+      const data = await res.json();
+      console.log('[MapBuilder] Init API response:', data);
+
+      if (!data.success || !data.floor) {
+        setStatusMsg('Failed to initialize map data');
+        return;
+      }
+
+      setStoreName(data.storeName || 'My Store');
+      setCurrentVersionId(data.versionId);
+
+      const currentFloor: FloorData = {
+        id: data.floor.id,
+        name: data.floor.name,
+        level_number: data.floor.level_number,
+        store_version_id: data.floor.store_version_id,
+        floorplan_image_url: data.floor.floorplan_image_url,
+      };
+
+      setFloor(currentFloor);
+      console.log('[MapBuilder] Using floor:', currentFloor.id);
+      await loadFloorData(currentFloor.id);
+    } catch (err) {
+      console.error('[MapBuilder] Legacy init failed:', err);
+      setStatusMsg('Failed to initialize — check console for details');
     }
-    setFloor(currentFloor);
-    await loadFloorData(currentFloor.id);
   }
 
   // ── Save ─────────────────────────────────────────────────────
@@ -262,81 +289,29 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
     setStatusMsg('Saving...');
 
     try {
-      const floorId = floor.id;
+      const res = await fetch('/api/admin/map-builder-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save',
+          floorId: floor.id,
+          nodes: nodes.map((n) => ({ id: n.id, x: n.x, z: n.z, type: n.type, label: n.label })),
+          edges: edges.map((e) => ({ nodeA: e.nodeA, nodeB: e.nodeB })),
+          sections: sections.map((s) => ({ id: s.id, name: s.name, node_id: s.node_id })),
+        }),
+      });
 
-      // 1. Upsert all current nodes
-      if (nodes.length > 0) {
-        const { error: nodesErr } = await supabase
-          .from('navigation_nodes')
-          .upsert(
-            nodes.map((n) => ({
-              id: n.id,
-              x: n.x,
-              z: n.z,
-              floor_id: floorId,
-              type: n.type,
-              label: n.label,
-              walkable: true,
-            }))
-          );
-        if (nodesErr) throw nodesErr;
-      }
-
-      // 2. Delete nodes removed from builder
-      const { data: dbNodes } = await supabase
-        .from('navigation_nodes')
-        .select('id')
-        .eq('floor_id', floorId);
-
-      const currentNodeIds = new Set(nodes.map((n) => n.id));
-      const removedNodeIds = (dbNodes || [])
-        .filter((n: { id: string }) => !currentNodeIds.has(n.id))
-        .map((n: { id: string }) => n.id);
-
-      if (removedNodeIds.length > 0) {
-        await supabase
-          .from('navigation_nodes')
-          .delete()
-          .in('id', removedNodeIds);
-      }
-
-      // 3. Replace all edges for this floor
-      await supabase
-        .from('navigation_edges')
-        .delete()
-        .eq('floor_id', floorId);
-
-      if (edges.length > 0) {
-        const edgeRows = edges.flatMap((e) => [
-          { from_node: e.nodeA, to_node: e.nodeB, floor_id: floorId },
-          { from_node: e.nodeB, to_node: e.nodeA, floor_id: floorId },
-        ]);
-        const { error: edgesErr } = await supabase
-          .from('navigation_edges')
-          .insert(edgeRows);
-        if (edgesErr) throw edgesErr;
-      }
-
-      // 4. Replace all sections for this floor
-      await supabase.from('sections').delete().eq('floor_id', floorId);
-
-      if (sections.length > 0) {
-        const { error: secErr } = await supabase.from('sections').insert(
-          sections.map((s) => ({
-            id: s.id,
-            name: s.name,
-            node_id: s.node_id,
-            floor_id: floorId,
-          }))
-        );
-        if (secErr) throw secErr;
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Save failed');
       }
 
       setDirty(false);
-      setStatusMsg('Saved successfully');
+      setStatusMsg('Saved successfully ✓');
+      console.log('[MapBuilder] Saved:', { nodes: nodes.length, edges: edges.length, sections: sections.length });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
-      console.error('Save failed:', err);
+      console.error('[MapBuilder] Save failed:', err);
       setStatusMsg(`Save failed: ${message}`);
     } finally {
       setSaving(false);
@@ -369,10 +344,10 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
       setFloor((prev) =>
         prev ? { ...prev, floorplan_image_url: publicUrl } : prev
       );
-      setStatusMsg('Floor plan uploaded');
+      setStatusMsg('Floor plan uploaded ✓');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Unknown error';
-      console.error('Upload failed:', err);
+      console.error('[MapBuilder] Upload failed:', err);
       setStatusMsg(`Upload failed: ${message}`);
     }
   }
@@ -380,7 +355,7 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
   // ── Canvas Event Handlers ───────────────────────────────────
 
   const handleCanvasClick = useCallback(
-    (meterX: number, meterZ: number) => {
+    async (meterX: number, meterZ: number) => {
       if (tool !== 'addNode' || !floor) return;
 
       let x = meterX;
@@ -398,8 +373,9 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
         );
       }
 
+      const tempId = crypto.randomUUID();
       const newNode: MapNode = {
-        id: crypto.randomUUID(),
+        id: tempId,
         x,
         z,
         floor_id: floor.id,
@@ -407,9 +383,37 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
         label: null,
       };
 
-      setNodes([...updatedNodes, newNode]);
-      setSelectedNodeId(newNode.id);
+      // Optimistic update
+      const newNodes = [...updatedNodes, newNode];
+      setNodes(newNodes);
+      setSelectedNodeId(tempId);
       setDirty(true);
+
+      // Insert via server-side API (bypasses RLS)
+      const res = await fetch('/api/admin/map-builder-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'addNode',
+          id: tempId,
+          x,
+          z,
+          floorId: floor.id,
+          type: nodeType,
+          label: null,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        // Roll back
+        console.error('[MapBuilder] Node insert failed, rolling back:', data.error);
+        setNodes((prev) => prev.filter((n) => n.id !== tempId));
+        setSelectedNodeId(null);
+        setStatusMsg(`Failed to add node: ${data.error || 'Unknown error'}`);
+      } else {
+        console.log('[MapBuilder] Node inserted:', tempId);
+      }
     },
     [tool, nodeType, floor, snapToGrid, nodes]
   );
@@ -428,40 +432,100 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
               (e.nodeA === nodeId && e.nodeB === connectFromId)
           );
           if (!exists) {
-            setEdges((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                nodeA: connectFromId,
-                nodeB: nodeId,
-              },
-            ]);
+            const edgeId = crypto.randomUUID();
+            const newEdge: MapEdge = { id: edgeId, nodeA: connectFromId, nodeB: nodeId };
+
+            // Optimistic update
+            setEdges((prev) => [...prev, newEdge]);
             setDirty(true);
+
+            // Insert via server-side API (bypasses RLS)
+            if (floor) {
+              const insertEdges = async () => {
+                const res = await fetch('/api/admin/map-builder-data', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    action: 'addEdge',
+                    nodeA: connectFromId,
+                    nodeB: nodeId,
+                    floorId: floor.id,
+                  }),
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                  console.error('[MapBuilder] Edge insert failed, rolling back:', data.error);
+                  setEdges((prev) => prev.filter((e) => e.id !== edgeId));
+                  setStatusMsg(`Failed to add edge: ${data.error || 'Unknown error'}`);
+                } else {
+                  console.log('[MapBuilder] Edge inserted:', connectFromId, '↔', nodeId);
+                }
+              };
+              insertEdges();
+            }
           }
           setConnectFromId(null);
         }
       } else if (tool === 'delete') {
-        setNodes((prev) => prev.filter((n) => n.id !== nodeId));
-        setEdges((prev) =>
-          prev.filter((e) => e.nodeA !== nodeId && e.nodeB !== nodeId)
-        );
-        setSections((prev) => prev.filter((s) => s.node_id !== nodeId));
-        if (selectedNodeId === nodeId) setSelectedNodeId(null);
-        if (connectFromId === nodeId) setConnectFromId(null);
-        setDirty(true);
+        // Delete node and its edges/sections
+        const deleteNode = async () => {
+          setNodes((prev) => prev.filter((n) => n.id !== nodeId));
+          setEdges((prev) =>
+            prev.filter((e) => e.nodeA !== nodeId && e.nodeB !== nodeId)
+          );
+          setSections((prev) => prev.filter((s) => s.node_id !== nodeId));
+          if (selectedNodeId === nodeId) setSelectedNodeId(null);
+          if (connectFromId === nodeId) setConnectFromId(null);
+          setDirty(true);
+
+          // Delete via server-side API (bypasses RLS)
+          const res = await fetch('/api/admin/map-builder-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'deleteNode',
+              nodeId,
+              floorId: floor?.id,
+            }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.success) {
+            console.error('[MapBuilder] Node delete failed:', data.error);
+            setStatusMsg(`Delete failed: ${data.error || 'Unknown error'}`);
+          }
+        };
+        deleteNode();
       }
     },
-    [tool, connectFromId, edges, selectedNodeId]
+    [tool, connectFromId, edges, selectedNodeId, floor]
   );
 
   const handleEdgeClick = useCallback(
     (edgeId: string) => {
       if (tool === 'delete') {
+        const edge = edges.find((e) => e.id === edgeId);
         setEdges((prev) => prev.filter((e) => e.id !== edgeId));
         setDirty(true);
+
+        // Delete via server-side API (bypasses RLS)
+        if (edge && floor) {
+          const deleteEdge = async () => {
+            await fetch('/api/admin/map-builder-data', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                action: 'deleteEdge',
+                nodeA: edge.nodeA,
+                nodeB: edge.nodeB,
+                floorId: floor.id,
+              }),
+            });
+          };
+          deleteEdge();
+        }
       }
     },
-    [tool]
+    [tool, edges, floor]
   );
 
   const handleNodeDrag = useCallback(
@@ -540,6 +604,7 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
     const section = sections.find((s) => s.id === targetSectionId);
     if (!section) {
       setSimPath(null);
+      setStatusMsg('Section not found');
       return;
     }
 
@@ -555,7 +620,7 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
     } else {
       setSimPath(null);
       setSimDistance(0);
-      setStatusMsg('No path found between selected nodes');
+      setStatusMsg('No path found — ensure nodes are connected with edges');
     }
   }
 
@@ -619,6 +684,93 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
         : [],
       entranceNodeId: entrance?.id || nodes[0]?.id || '',
     };
+  }
+
+  // ── Auto-Generate Grid ──────────────────────────────────────
+
+  async function handleAutoGenerateGrid() {
+    if (!floor) return;
+
+    const gridSize = 5; // 5x5 grid
+    const spacing = 2; // 2 meters apart
+    const startX = -((gridSize - 1) * spacing) / 2;
+    const startZ = 0;
+
+    const newNodes: MapNode[] = [];
+    const newEdges: MapEdge[] = [];
+
+    // Generate nodes
+    for (let row = 0; row < gridSize; row++) {
+      for (let col = 0; col < gridSize; col++) {
+        const nodeId = crypto.randomUUID();
+        let type: MapNode['type'] = 'normal';
+        let label: string | null = null;
+
+        // Mark center bottom as entrance
+        if (row === 0 && col === Math.floor(gridSize / 2)) {
+          type = 'entrance';
+          label = 'Entrance';
+        }
+
+        newNodes.push({
+          id: nodeId,
+          x: startX + col * spacing,
+          z: startZ + row * spacing,
+          floor_id: floor.id,
+          type,
+          label,
+        });
+      }
+    }
+
+    // Generate edges (horizontal + vertical)
+    for (let row = 0; row < gridSize; row++) {
+      for (let col = 0; col < gridSize; col++) {
+        const idx = row * gridSize + col;
+        // Connect right
+        if (col < gridSize - 1) {
+          newEdges.push({
+            id: crypto.randomUUID(),
+            nodeA: newNodes[idx].id,
+            nodeB: newNodes[idx + 1].id,
+          });
+        }
+        // Connect down
+        if (row < gridSize - 1) {
+          newEdges.push({
+            id: crypto.randomUUID(),
+            nodeA: newNodes[idx].id,
+            nodeB: newNodes[idx + gridSize].id,
+          });
+        }
+      }
+    }
+
+    setNodes(newNodes);
+    setEdges(newEdges);
+    setSections([]);
+    setDirty(true);
+    setStatusMsg(`Generated ${newNodes.length} nodes and ${newEdges.length} edges`);
+  }
+
+  // ── Clear All ───────────────────────────────────────────────
+
+  async function handleClearAll() {
+    if (!floor) return;
+    const confirmed = window.confirm(
+      `Clear all ${nodes.length} nodes and ${edges.length} edges? This cannot be undone until you save.`
+    );
+    if (!confirmed) return;
+
+    setNodes([]);
+    setEdges([]);
+    setSections([]);
+    setSelectedNodeId(null);
+    setConnectFromId(null);
+    setSimPath(null);
+    setSimDistance(0);
+    setDirty(true);
+    setStatusMsg('Cleared all nodes and edges');
   }
 
   // ── Tool Change Handler ──────────────────────────────────────
@@ -685,6 +837,22 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
           <span className="text-xs text-white/30">
             {floor?.name || 'No floor'}
           </span>
+
+          {/* Live node/edge counts */}
+          <div className="flex items-center gap-2 ml-2">
+            <span className="text-[10px] text-white/40 bg-white/5 px-2 py-0.5 rounded">
+              {nodes.length} nodes
+            </span>
+            <span className="text-[10px] text-white/40 bg-white/5 px-2 py-0.5 rounded">
+              {edges.length} edges
+            </span>
+            {sections.length > 0 && (
+              <span className="text-[10px] text-white/40 bg-white/5 px-2 py-0.5 rounded">
+                {sections.length} sections
+              </span>
+            )}
+          </div>
+
           {dirty && (
             <span className="text-xs text-amber-400/80">Unsaved changes</span>
           )}
@@ -719,10 +887,23 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
           onToggleGrid={() => setShowGrid((v) => !v)}
           onToggleSnap={() => setSnapToGrid((v) => !v)}
           onUploadFloorPlan={handleUploadFloorPlan}
+          onAutoGenerateGrid={handleAutoGenerateGrid}
+          onClearAll={handleClearAll}
+          nodeCount={nodes.length}
         />
 
         {/* Canvas */}
         <div className="flex-1 relative">
+          {nodes.length === 0 && !loading && (
+            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+              <div className="text-center">
+                <p className="text-white/25 text-sm mb-1">No nodes on this floor</p>
+                <p className="text-white/15 text-xs">
+                  Select the <strong>Add Node (+)</strong> tool and click on the grid, or use <strong>Auto Grid</strong>
+                </p>
+              </div>
+            </div>
+          )}
           <MapCanvas
             nodes={nodes}
             edges={edges}
@@ -760,6 +941,15 @@ export default function MapBuilder({ storeId: propStoreId, versionId: propVersio
             setSections((prev) => prev.filter((s) => s.node_id !== nodeId));
             setSelectedNodeId(null);
             setDirty(true);
+
+            // Delete from Supabase
+            supabase
+              .from('navigation_nodes')
+              .delete()
+              .eq('id', nodeId)
+              .then(({ error }) => {
+                if (error) console.error('[MapBuilder] Delete node failed:', error);
+              });
           }}
         />
       </div>

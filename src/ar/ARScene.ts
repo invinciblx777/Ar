@@ -152,13 +152,23 @@ export class ARScene {
     }
 
     /**
-     * Update the start node (e.g. after QR scan) and recalibrate.
+     * Get the current camera position in AR space.
+     * Used for QR recalibration from external callers.
      */
-    recalibrateFromNode(nodeId: string, currentARPosition: { x: number; z: number }): void {
+    getCameraPosition(): { x: number; z: number } {
+        return { x: this.camera.position.x, z: this.camera.position.z };
+    }
+
+    /**
+     * Update the start node (e.g. after QR scan) and recalibrate.
+     * If no currentARPosition is provided, uses the current camera position.
+     */
+    recalibrateFromNode(nodeId: string, currentARPosition?: { x: number; z: number }): void {
         const node = this.config.graph.nodes.get(nodeId);
         if (!node) return;
 
-        this.coordMapper.recalibrateFromQR(node, { x: currentARPosition.x, y: 0, z: currentARPosition.z });
+        const arPos = currentARPosition ?? this.getCameraPosition();
+        this.coordMapper.recalibrateFromQR(node, { x: arPos.x, y: 0, z: arPos.z });
         this.navEngine.setStartNode(nodeId);
         this.refreshWaypoints();
     }
@@ -230,24 +240,14 @@ export class ARScene {
     };
 
     /**
-     * Refresh waypoint markers based on current path.
+     * Refresh waypoint markers based on current navigation state.
      */
     private refreshWaypoints(): void {
-        const path = this.navEngine.getFullPath();
-        const remaining = path.slice(
-            Math.max(0, path.indexOf(
-                path.find((_wp, i) => i >= (this.navEngine as unknown as { currentWaypointIndex: number }).currentWaypointIndex) || path[0]
-            ))
-        );
-
-        // Use remaining waypoints from the engine's state
-        const waypoints = this.navEngine.updatePosition(
-            this.navEngine.getUserPosition().x,
-            this.navEngine.getUserPosition().z
-        ).remainingWaypoints;
+        const userPos = this.navEngine.getUserPosition();
+        const navState = this.navEngine.updatePosition(userPos.x, userPos.z);
 
         this.waypointRenderer.renderPath(
-            waypoints,
+            navState.remainingWaypoints,
             (node: NavigationNode) => this.coordMapper.nodeToAR(node),
             0
         );

@@ -13,6 +13,9 @@ interface ToolbarProps {
   onToggleGrid: () => void;
   onToggleSnap: () => void;
   onUploadFloorPlan: (file: File) => void;
+  onAutoGenerateGrid: () => void;
+  onClearAll: () => void;
+  nodeCount: number;
 }
 
 const TOOLS: { id: Tool; label: string; icon: string }[] = [
@@ -25,7 +28,7 @@ const TOOLS: { id: Tool; label: string; icon: string }[] = [
 const NODE_TYPES: { id: NodeType; label: string; color: string }[] = [
   { id: 'normal', label: 'Normal', color: '#00f0ff' },
   { id: 'entrance', label: 'Entrance', color: '#00ff88' },
-  { id: 'section', label: 'Section', color: '#ff8800' },
+  { id: 'section', label: 'Section', color: '#a855f7' },
 ];
 
 export default function Toolbar({
@@ -38,6 +41,9 @@ export default function Toolbar({
   onToggleGrid,
   onToggleSnap,
   onUploadFloorPlan,
+  onAutoGenerateGrid,
+  onClearAll,
+  nodeCount,
 }: ToolbarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -60,11 +66,10 @@ export default function Toolbar({
           <button
             key={t.id}
             onClick={() => onToolChange(t.id)}
-            className={`w-full h-10 rounded-lg flex items-center justify-center text-xs font-medium transition-all ${
-              tool === t.id
+            className={`w-full h-10 rounded-lg flex items-center justify-center text-xs font-medium transition-all ${tool === t.id
                 ? 'bg-accent/20 text-accent border border-accent/40'
                 : 'text-white/50 hover:bg-white/5 hover:text-white/80 border border-transparent'
-            }`}
+              }`}
             title={t.label}
           >
             <span className="text-sm font-bold">{t.icon}</span>
@@ -82,11 +87,10 @@ export default function Toolbar({
             <button
               key={nt.id}
               onClick={() => onNodeTypeChange(nt.id)}
-              className={`w-full h-8 rounded-lg flex items-center justify-center gap-1 text-[10px] font-medium transition-all ${
-                nodeType === nt.id
+              className={`w-full h-8 rounded-lg flex items-center justify-center gap-1 text-[10px] font-medium transition-all ${nodeType === nt.id
                   ? 'border border-white/30 bg-white/10'
                   : 'text-white/40 hover:bg-white/5 border border-transparent'
-              }`}
+                }`}
               title={nt.label}
             >
               <span
@@ -110,22 +114,20 @@ export default function Toolbar({
         </span>
         <button
           onClick={onToggleGrid}
-          className={`w-full h-8 rounded-lg flex items-center justify-center text-[10px] font-medium transition-all ${
-            showGrid
+          className={`w-full h-8 rounded-lg flex items-center justify-center text-[10px] font-medium transition-all ${showGrid
               ? 'bg-white/10 text-white/80 border border-white/20'
               : 'text-white/40 hover:bg-white/5 border border-transparent'
-          }`}
+            }`}
           title="Toggle Grid"
         >
           Grid
         </button>
         <button
           onClick={onToggleSnap}
-          className={`w-full h-8 rounded-lg flex items-center justify-center text-[10px] font-medium transition-all ${
-            snapToGrid
+          className={`w-full h-8 rounded-lg flex items-center justify-center text-[10px] font-medium transition-all ${snapToGrid
               ? 'bg-white/10 text-white/80 border border-white/20'
               : 'text-white/40 hover:bg-white/5 border border-transparent'
-          }`}
+            }`}
           title="Snap to Grid"
         >
           Snap
@@ -137,15 +139,34 @@ export default function Toolbar({
         <div className="h-px bg-white/10" />
       </div>
 
-      {/* Floor plan upload */}
+      {/* Actions */}
       <div className="flex flex-col gap-1 w-full px-2">
+        <span className="text-[9px] text-white/30 uppercase tracking-wider text-center mb-1">
+          Actions
+        </span>
         <button
           onClick={() => fileInputRef.current?.click()}
-          className="w-full h-10 rounded-lg flex items-center justify-center text-[10px] font-medium text-white/40 hover:bg-white/5 hover:text-white/80 border border-transparent transition-all"
+          className="w-full h-8 rounded-lg flex items-center justify-center text-[10px] font-medium text-white/40 hover:bg-white/5 hover:text-white/80 border border-transparent transition-all"
           title="Upload Floor Plan"
         >
           Image
         </button>
+        <button
+          onClick={onAutoGenerateGrid}
+          className="w-full h-8 rounded-lg flex items-center justify-center text-[10px] font-medium text-emerald-400/60 hover:bg-emerald-400/10 hover:text-emerald-400 border border-transparent transition-all"
+          title="Auto-generate a 5×5 grid of connected nodes"
+        >
+          Grid+
+        </button>
+        {nodeCount > 0 && (
+          <button
+            onClick={onClearAll}
+            className="w-full h-8 rounded-lg flex items-center justify-center text-[10px] font-medium text-red-400/50 hover:bg-red-400/10 hover:text-red-400 border border-transparent transition-all"
+            title="Clear all nodes and edges"
+          >
+            Clear
+          </button>
+        )}
         <input
           ref={fileInputRef}
           type="file"

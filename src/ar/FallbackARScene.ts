@@ -82,12 +82,8 @@ export class FallbackARScene {
         // Init navigation
         this.navEngine = new NavigationEngine();
         this.coordMapper = new CoordinateMapper();
-        this.waypointRenderer = new WaypointRenderer(this.scene); // We'll move markers to contentGroup manually
-
-        // Override helper to add to contentGroup instead of scene
-        this.waypointRenderer = new WaypointRenderer(this.scene);
-        // Hack: Replace scene with group for renderer so objects go into the group
-        (this.waypointRenderer as any).scene = this.contentGroup;
+        // Pass contentGroup so waypoints rotate with compass heading
+        this.waypointRenderer = new WaypointRenderer(this.contentGroup);
 
         // Start pathfinding
         const success = this.navEngine.initialize(
@@ -218,8 +214,7 @@ export class FallbackARScene {
     private setupOrientationListener(): void {
         const handleOrientation = (event: DeviceOrientationEvent) => {
             if (this.disposed) return;
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const compassHeading = (event as any).webkitCompassHeading;
+            const compassHeading = event.webkitCompassHeading;
 
             if (compassHeading !== undefined && compassHeading !== null) {
                 // iOS: 0=North, clockwise

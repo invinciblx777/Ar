@@ -2,18 +2,21 @@
 
 import { motion } from 'framer-motion';
 import { useRouter } from 'next/navigation';
-import { Section } from '../lib/sections';
-
 interface StartButtonProps {
-    selectedSection: Section | null;
+    selectedSection: { id: string; name: string } | null;
+    storeId?: string | null;
 }
 
-export default function StartButton({ selectedSection }: StartButtonProps) {
+export default function StartButton({ selectedSection, storeId }: StartButtonProps) {
     const router = useRouter();
 
     const handleClick = () => {
         if (!selectedSection) return;
-        router.push(`/ar?section=${selectedSection.id}`);
+        const params = new URLSearchParams({ section: selectedSection.id });
+        if (storeId) {
+            params.set('storeId', storeId);
+        }
+        router.push(`/ar?${params.toString()}`);
     };
 
     return (

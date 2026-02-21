@@ -3,15 +3,29 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import HeroSection from '../components/HeroSection';
+import StoreSelector from '../components/StoreSelector';
 import SectionSelector from '../components/SectionSelector';
 import StartButton from '../components/StartButton';
 import FeatureCards from '../components/FeatureCards';
-import ErrorOverlay from '../components/ErrorOverlay';
-import { Section } from '../lib/sections';
 import { isMobile } from '../utils/device';
 
+interface SelectedStore {
+  id: string;
+  name: string;
+  length_meters: number;
+  width_meters: number;
+}
+
 export default function Home() {
-  const [selectedSection, setSelectedSection] = useState<Section | null>(null);
+  const [selectedStore, setSelectedStore] = useState<SelectedStore | null>(null);
+  const [selectedSection, setSelectedSection] = useState<{
+    id: string;
+    name: string;
+    node_id: string;
+    icon: string | null;
+    x?: number;
+    z?: number;
+  } | null>(null);
   const [showDesktopWarning, setShowDesktopWarning] = useState(false);
 
   useEffect(() => {
@@ -22,7 +36,6 @@ export default function Home() {
 
   return (
     <main className="min-h-screen gradient-mesh relative overflow-hidden">
-      {/* Desktop warning toast */}
       {showDesktopWarning && (
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -45,28 +58,32 @@ export default function Home() {
 
       <HeroSection />
 
-      {/* Navigation controls */}
       <section className="px-6 pb-6 flex flex-col items-center">
+        <StoreSelector
+          onSelect={setSelectedStore}
+          selected={selectedStore}
+        />
         <SectionSelector
+          storeId={selectedStore?.id ?? null}
           onSelect={setSelectedSection}
           selected={selectedSection}
         />
-        <StartButton selectedSection={selectedSection} />
+        <StartButton
+          selectedSection={selectedSection}
+          storeId={selectedStore?.id ?? null}
+        />
       </section>
 
       <FeatureCards />
 
-      {/* Footer */}
       <motion.footer
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         transition={{ delay: 1.5 }}
         className="text-center py-10 text-xs text-white/20"
       >
-        <p>AR Store Navigator — MVP Demo</p>
-        <p className="mt-1">
-          Built with Next.js • Three.js • WebXR
-        </p>
+        <p>AR Store Navigator</p>
+        <p className="mt-1">Built with Next.js, Three.js, and WebXR</p>
       </motion.footer>
     </main>
   );

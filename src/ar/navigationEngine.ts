@@ -31,6 +31,8 @@ export interface NavigationState {
     recalculated: boolean;
     /** Current closest node to user */
     closestNode: NavigationNode | null;
+    /** Current user position in map space */
+    userPosition: { x: number; z: number };
 }
 
 export interface NavigationEngineConfig {
@@ -192,6 +194,7 @@ export class NavigationEngine {
                 arrived: true,
                 recalculated: false,
                 closestNode: this.fullPath[this.fullPath.length - 1],
+                userPosition: { x: mapX, z: mapZ },
             };
         }
 
@@ -216,6 +219,7 @@ export class NavigationEngine {
             arrived: false,
             recalculated,
             closestNode,
+            userPosition: { x: mapX, z: mapZ },
         };
     }
 
@@ -383,6 +387,7 @@ export class NavigationEngine {
             arrived: false,
             recalculated: false,
             closestNode: null,
+            userPosition: { x: this.userMapX, z: this.userMapZ },
         };
     }
 }

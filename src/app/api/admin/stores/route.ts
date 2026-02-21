@@ -257,3 +257,44 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
 }
+
+/**
+ * DELETE /api/admin/stores?id=xxx — delete a store and all its data
+ */
+export async function DELETE(request: NextRequest) {
+    const userId = await getAuthUserId();
+    if (!userId) {
+        return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+    }
+
+    const supabase = getAdminClient();
+
+    const { data: profile } = await supabase
+        .from('users')
+        .select('role')
+        .eq('id', userId)
+        .single();
+
+    if (!profile || profile.role !== 'admin') {
+        return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+    }
+
+    const { searchParams } = new URL(request.url);
+    const storeId = searchParams.get('id');
+
+    if (!storeId) {
+        return NextResponse.json({ error: 'Store ID required' }, { status: 400 });
+    }
+
+    // CASCADE delete handles versions, floors, nodes, edges, sections
+    const { error } = await supabase
+        .from('stores')
+        .delete()
+        .eq('id', storeId);
+
+    if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+}
