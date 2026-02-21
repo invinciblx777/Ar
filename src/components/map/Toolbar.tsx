@@ -26,6 +26,7 @@ const NODE_TYPES: { id: NodeType; label: string; color: string }[] = [
   { id: 'normal', label: 'Normal', color: '#00f0ff' },
   { id: 'entrance', label: 'Entrance', color: '#00ff88' },
   { id: 'section', label: 'Section', color: '#ff8800' },
+  { id: 'qr_anchor', label: 'QR Anchor', color: '#ff00ff' },
 ];
 
 export default function Toolbar({

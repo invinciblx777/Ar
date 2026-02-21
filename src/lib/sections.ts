@@ -1,5 +1,4 @@
 import { supabase } from './supabaseClient';
-import type { NavigationNode } from './mapData';
 
 export interface Section {
     id: string;

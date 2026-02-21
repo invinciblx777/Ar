@@ -3,15 +3,11 @@
 import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import HeroSection from '../components/HeroSection';
-import SectionSelector from '../components/SectionSelector';
-import StartButton from '../components/StartButton';
+import StoreSelector from '../components/StoreSelector';
 import FeatureCards from '../components/FeatureCards';
-import ErrorOverlay from '../components/ErrorOverlay';
-import { Section } from '../lib/sections';
 import { isMobile } from '../utils/device';
 
 export default function Home() {
-  const [selectedSection, setSelectedSection] = useState<Section | null>(null);
   const [showDesktopWarning, setShowDesktopWarning] = useState(false);
 
   useEffect(() => {
@@ -45,13 +41,9 @@ export default function Home() {
 
       <HeroSection />
 
-      {/* Navigation controls */}
-      <section className="px-6 pb-6 flex flex-col items-center">
-        <SectionSelector
-          onSelect={setSelectedSection}
-          selected={selectedSection}
-        />
-        <StartButton selectedSection={selectedSection} />
+      {/* Store Selection */}
+      <section className="px-6 pb-8 flex flex-col items-center">
+        <StoreSelector />
       </section>
 
       <FeatureCards />
@@ -63,9 +55,9 @@ export default function Home() {
         transition={{ delay: 1.5 }}
         className="text-center py-10 text-xs text-white/20"
       >
-        <p>AR Store Navigator — MVP Demo</p>
+        <p>NavGrid — Indoor AR Navigation Platform</p>
         <p className="mt-1">
-          Built with Next.js • Three.js • WebXR
+          Built with Next.js &bull; Three.js &bull; WebXR
         </p>
       </motion.footer>
     </main>

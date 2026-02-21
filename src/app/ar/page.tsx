@@ -1,14 +1,13 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback, Suspense } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 // AR Scenes
 import { ARScene } from '../../ar/ARScene';
 import { FallbackARScene } from '../../ar/FallbackARScene';
 // Systems
-import { fetchNavigationGraph, fetchNavigationGraphForStore, type NavigationGraph } from '../../lib/mapData';
-import { getSectionById, type Section } from '../../lib/sections';
+import { fetchNavigationGraph, fetchNavigationGraphForStore, type NavigationGraph, type StoreSection } from '../../lib/mapData';
 import { detectARSupport, type ARSupportInfo } from '../../utils/detectARSupport';
 import { formatDistance } from '../../utils/navigation';
 import { QRScanner, type QRScanResult } from '../../utils/qrScanner';
@@ -28,14 +27,21 @@ type ARStatus =
     | 'qr-error'
     | 'no-path';
 
+interface SectionForUI {
+    id: string;
+    name: string;
+    node_id: string;
+    icon: string | null;
+    description?: string;
+    category?: string;
+}
+
 function ARPageContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const containerRef = useRef<HTMLDivElement>(null);
-    const cameraContainerRef = useRef<HTMLDivElement>(null); // For QR Scanner
 
-    // Using any for flexibility between ARScene and FallbackARScene
-    // In production you might want a common interface
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const arSceneRef = useRef<any>(null);
     const qrScannerRef = useRef<QRScanner | null>(null);
 
@@ -43,9 +49,8 @@ function ARPageContent() {
     const [errorMessage, setErrorMessage] = useState('');
 
     // Navigation State
-    const [distance, setDistance] = useState<number | null>(null);
     const [navState, setNavState] = useState<NavigationState | null>(null);
-    const [targetSection, setTargetSection] = useState<Section | null>(null);
+    const [targetSection, setTargetSection] = useState<SectionForUI | null>(null);
     const [graph, setGraph] = useState<NavigationGraph | null>(null);
 
     // UI State
@@ -54,9 +59,15 @@ function ARPageContent() {
     const [isScanningQR, setIsScanningQR] = useState(false);
     const [userPosition, setUserPosition] = useState({ x: 0, z: 0 });
 
+    // Destination search panel (shown when no section selected yet)
+    const [showDestinationPanel, setShowDestinationPanel] = useState(false);
+    const [destinationSearch, setDestinationSearch] = useState('');
+    const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+
     const sectionId = searchParams.get('section');
     const storeIdParam = searchParams.get('storeId');
     const debugParam = searchParams.get('debug');
+    const startAtEntrance = searchParams.get('startAtEntrance');
 
     useEffect(() => {
         if (debugParam === 'true') {
@@ -65,8 +76,12 @@ function ARPageContent() {
     }, [debugParam]);
 
     const handleBack = useCallback(() => {
-        router.push('/');
-    }, [router]);
+        if (storeIdParam) {
+            router.push(`/navigate?storeId=${storeIdParam}`);
+        } else {
+            router.push('/');
+        }
+    }, [router, storeIdParam]);
 
     const handleExit = useCallback(async () => {
         if (arSceneRef.current) {
@@ -77,17 +92,42 @@ function ARPageContent() {
             qrScannerRef.current.stopScanning();
             qrScannerRef.current = null;
         }
-        router.push('/');
-    }, [router]);
+        handleBack();
+    }, [handleBack]);
+
+    // ── Destination filtering ────────────────────────────────────
+
+    const graphSections = useMemo(() => {
+        if (!graph) return [];
+        return graph.sections;
+    }, [graph]);
+
+    const categories = useMemo(() => {
+        const cats = new Set(graphSections.map((s) => s.category || 'general'));
+        return Array.from(cats).sort();
+    }, [graphSections]);
+
+    const filteredSections = useMemo(() => {
+        let filtered = graphSections;
+        if (selectedCategory) {
+            filtered = filtered.filter((s) => (s.category || 'general') === selectedCategory);
+        }
+        if (destinationSearch.trim()) {
+            const q = destinationSearch.toLowerCase();
+            filtered = filtered.filter(
+                (s) =>
+                    s.name.toLowerCase().includes(q) ||
+                    (s.description || '').toLowerCase().includes(q)
+            );
+        }
+        return filtered;
+    }, [graphSections, destinationSearch, selectedCategory]);
 
     // ── QR Scanner Logic ──────────────────────────────────────────
 
     const startQRScan = useCallback(async () => {
         if (!containerRef.current) return;
         setIsScanningQR(true);
-
-        // Hide AR scene temporarily? Or just overlay?
-        // Overlay is better.
 
         qrScannerRef.current = new QRScanner();
 
@@ -108,6 +148,7 @@ function ARPageContent() {
             setStatus('qr-error');
             setIsScanningQR(false);
         }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const stopQRScan = useCallback(() => {
@@ -126,56 +167,47 @@ function ARPageContent() {
         if (arSceneRef.current && graph) {
             const node = graph.nodes.get(result.nodeId);
             if (node) {
-                // Determine current AR position (if needed by scene)
-                // For Fallback, it assumes 0,0,0
-                // For WebXR, we need to pass current camera pos if we want precise offset
-                // But for simplicity, we assume user is STANDING at the anchor when scanning
-
-                // We'll let the scene handle it
                 if (arMode === 'webxr') {
-                    // ARScene needs 'currentARPosition' to calibrate offset
-                    // We can't easily get it from outside without exposing it
-                    // HACK: Pass {x:0, z:0} allows ARScene to just assume user is at 0,0 relative to... something?
-                    // Actually ARScene.recalibrateFromNode uses the passed position.
-                    // IMPORTANT: We need the camera position from the RENDER LOOP.
-                    // Since we can't access it here easily, we might need the Scene to handle QR logic?
-                    // OR, simpler: We set a flag in ARScene "pendingRecalibration = nodeId".
-                    // Let's call the method we added.
-
-                    // Ideally we pass the camera position. 
-                    // Since this is MVP upgraded, let's assume the user is at (0,0,0) in AR space 
-                    // OR rely on the fact that they just started or are standing still.
-                    // Actually, in WebXR world coordinates are persistent.
-                    // So passing {x: cameraX, z: cameraX} is vital.
-                    // We don't have it here. 
-
-                    // New plan: We trigger a "recalibrateNextFrame(nodeId)" on the scene.
-                    // I'll cast to any and call recalibrateFromNode if possible, 
-                    // passing a dummy that the scene might override or I'll update ARScene to take just ID and use current cam pos.
-                    // I'll update ARScene to use its OWN camera position if I didn't already.
-                    // I checked ARScene code: `recalibrateFromNode(nodeId, currentARPosition)`.
-                    // I should have made `currentARPosition` optional and let ARScene use `this.camera.position`.
-                    // Let's assume I can pass `arSceneRef.current.camera.position`.
-
                     const cam = arSceneRef.current.camera;
                     arSceneRef.current.recalibrateFromNode(result.nodeId, { x: cam.position.x, z: cam.position.z });
                 } else {
-                    // Fallback
                     arSceneRef.current.recalibrateFromNode(result.nodeId);
                 }
-
-                // Show success toast?
-                alert(`Re-anchored to: ${node.label || 'Node ' + node.id}`);
+                console.log(`[QR] Re-anchored to: ${node.label || 'Node ' + node.id}`);
             } else {
-                alert('Invalid QR Code: Node not found');
+                console.warn('[QR] Node not found in graph:', result.nodeId);
             }
         }
     }, [arMode, graph, stopQRScan]);
 
+    // ── Select destination from within AR ─────────────────────────
+
+    const handleSelectDestination = useCallback((section: StoreSection) => {
+        const sectionUI: SectionForUI = {
+            id: section.id,
+            name: section.name,
+            node_id: section.node_id,
+            icon: section.icon,
+            description: section.description,
+            category: section.category,
+        };
+        setTargetSection(sectionUI);
+        setShowDestinationPanel(false);
+
+        // Re-init navigation with new target
+        if (graph && arSceneRef.current) {
+            arSceneRef.current.navEngine?.initialize(
+                graph,
+                graph.entranceNodeId,
+                section.id
+            );
+        }
+    }, [graph]);
+
     // ── AR Initialization ────────────────────────────────────────
 
     const initAR = useCallback(
-        async (section: Section, graphData: NavigationGraph) => {
+        async (section: SectionForUI | null, graphData: NavigationGraph) => {
             if (!containerRef.current) return;
 
             setStatus('loading');
@@ -189,7 +221,7 @@ function ARPageContent() {
             }
 
             // Desktop check
-            if (!support.isMobile && sectionId !== 'debug') { // Allow debug bypass
+            if (!support.isMobile) {
                 if (debugParam !== 'true') {
                     setStatus('desktop');
                     return;
@@ -203,9 +235,9 @@ function ARPageContent() {
             }
 
             const sceneConfig = {
-                targetSectionId: section.id,
+                targetSectionId: section?.id || '',
                 graph: graphData,
-                startNodeId: graphData.entranceNodeId, // Default start
+                startNodeId: graphData.entranceNodeId,
                 onSessionEnd: () => {
                     setStatus('loading');
                     handleBack();
@@ -217,10 +249,9 @@ function ARPageContent() {
                     else setStatus('error');
                     setErrorMessage(msg);
                 },
-                onDistanceUpdate: (d: number) => setDistance(d),
+                onDistanceUpdate: () => { /* handled by state */ },
                 onStateUpdate: (state: NavigationState) => {
                     setNavState(state);
-                    // Update user pos for debug
                     if (arSceneRef.current?.navEngine) {
                         const pos = arSceneRef.current.navEngine.getUserPosition();
                         setUserPosition({ x: pos.x, z: pos.z });
@@ -228,8 +259,7 @@ function ARPageContent() {
                 },
                 onNavigationEvent: (event: NavigationEvent) => {
                     if (event.type === 'arrived') {
-                        // Maybe show confetti or specialized UI?
-                        console.log('Arrived!');
+                        console.log('[NAV] Arrived at destination!');
                     }
                 }
             };
@@ -266,37 +296,51 @@ function ARPageContent() {
 
             setStatus('unsupported');
         },
-        [handleBack, sectionId, debugParam]
+        [handleBack, debugParam]
     );
 
     // ── Effect: Load Graph & Start ───────────────────────────────
 
     useEffect(() => {
-        if (!sectionId) {
-            handleBack();
-            return;
-        }
-
         let mounted = true;
 
         async function load() {
-            // 1. Fetch Graph (use store-specific if storeId provided)
+            // 1. Fetch Graph
             const graphData = storeIdParam
                 ? await fetchNavigationGraphForStore(storeIdParam)
                 : await fetchNavigationGraph();
             if (!mounted) return;
             setGraph(graphData);
 
-            // 2. Find Section
-            const section = flattenSection(graphData.sections.find(s => s.id === sectionId));
+            // 2. Determine initial section
+            let section: SectionForUI | null = null;
 
-            if (!section) {
-                console.error('Section not found in graph');
+            if (sectionId) {
+                const found = graphData.sections.find(s => s.id === sectionId);
+                if (found) {
+                    section = {
+                        id: found.id,
+                        name: found.name,
+                        node_id: found.node_id,
+                        icon: found.icon,
+                        description: found.description,
+                        category: found.category,
+                    };
+                }
+            }
+
+            if (section) {
+                setTargetSection(section);
+            } else if (startAtEntrance === 'true') {
+                // Start without a destination — user can pick one later
+                setShowDestinationPanel(true);
+            } else if (!sectionId) {
+                // No section specified — show destination picker
+                setShowDestinationPanel(true);
+            } else {
                 handleBack();
                 return;
             }
-
-            setTargetSection(section);
 
             // 3. Init AR
             initAR(section, graphData);
@@ -309,19 +353,8 @@ function ARPageContent() {
             if (arSceneRef.current) arSceneRef.current.dispose();
             if (qrScannerRef.current) qrScannerRef.current.stopScanning();
         };
-    }, [sectionId, handleBack, initAR]);
-
-    // Helper to match shared Section interface
-    function flattenSection(s: any): Section | undefined {
-        if (!s) return undefined;
-        return {
-            id: s.id,
-            name: s.name,
-            node_id: s.node_id,
-            icon: s.icon,
-            x: 0, z: 0 // coordinates not strictly needed by UI now
-        };
-    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [sectionId, storeIdParam]);
 
     // ── Render ───────────────────────────────────────────────────
 
@@ -343,12 +376,6 @@ function ARPageContent() {
             {isScanningQR && (
                 <div className="fixed inset-0 z-[60] bg-black/80 flex flex-col items-center justify-center p-6">
                     <p className="text-white text-lg font-medium mb-8">Scan Location QR Code</p>
-                    {/* Video is appended to containerRef by QRScanner, 
-                        but we want it visible above everything. 
-                        QRScanner appends to container. 
-                        We need to make sure z-index is correct. 
-                        QRScanner sets zIndex 100 on video. */}
-
                     <button
                         onClick={stopQRScan}
                         className="mt-64 px-6 py-3 rounded-full bg-white/10 border border-white/20 text-white backdrop-blur-md"
@@ -359,9 +386,105 @@ function ARPageContent() {
                 </div>
             )}
 
+            {/* Destination Selection Panel (in AR) */}
+            <AnimatePresence>
+                {showDestinationPanel && status === 'running' && !isScanningQR && (
+                    <motion.div
+                        initial={{ opacity: 0, y: '100%' }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: '100%' }}
+                        transition={{ type: 'spring', damping: 25 }}
+                        className="fixed inset-x-0 bottom-0 z-50 max-h-[70vh] bg-black/90 backdrop-blur-xl rounded-t-2xl border-t border-white/15 flex flex-col"
+                    >
+                        {/* Handle */}
+                        <div className="flex justify-center pt-2 pb-1">
+                            <div className="w-10 h-1 bg-white/20 rounded-full" />
+                        </div>
+
+                        {/* Header */}
+                        <div className="px-4 py-2 flex items-center justify-between">
+                            <h2 className="text-sm font-semibold text-white">Where do you want to go?</h2>
+                            {targetSection && (
+                                <button
+                                    onClick={() => setShowDestinationPanel(false)}
+                                    className="text-xs text-white/40 px-2 py-1"
+                                >
+                                    Close
+                                </button>
+                            )}
+                        </div>
+
+                        {/* Search */}
+                        <div className="px-4 pb-2">
+                            <input
+                                type="text"
+                                value={destinationSearch}
+                                onChange={(e) => setDestinationSearch(e.target.value)}
+                                placeholder="Search sections..."
+                                className="w-full px-4 py-2.5 rounded-xl bg-white/5 border border-white/10 text-sm text-white placeholder-white/25 outline-none focus:border-[var(--accent)]/40"
+                            />
+                        </div>
+
+                        {/* Category pills */}
+                        {categories.length > 1 && (
+                            <div className="px-4 pb-2 flex gap-2 overflow-x-auto">
+                                <button
+                                    onClick={() => setSelectedCategory(null)}
+                                    className={`px-3 py-1 rounded-full text-[10px] font-medium whitespace-nowrap ${
+                                        !selectedCategory
+                                            ? 'bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/40'
+                                            : 'bg-white/5 text-white/40 border border-white/10'
+                                    }`}
+                                >
+                                    All
+                                </button>
+                                {categories.map((cat) => (
+                                    <button
+                                        key={cat}
+                                        onClick={() => setSelectedCategory(cat === selectedCategory ? null : cat)}
+                                        className={`px-3 py-1 rounded-full text-[10px] font-medium whitespace-nowrap capitalize ${
+                                            selectedCategory === cat
+                                                ? 'bg-[var(--accent)]/20 text-[var(--accent)] border border-[var(--accent)]/40'
+                                                : 'bg-white/5 text-white/40 border border-white/10'
+                                        }`}
+                                    >
+                                        {cat}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* Section list */}
+                        <div className="flex-1 overflow-y-auto px-4 pb-6 space-y-1.5">
+                            {filteredSections.map((section) => (
+                                <button
+                                    key={section.id}
+                                    onClick={() => handleSelectDestination(section)}
+                                    className="w-full p-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 transition-all text-left flex items-center gap-3"
+                                >
+                                    <span className="text-xl">{section.icon || '📍'}</span>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-sm font-medium text-white">{section.name}</p>
+                                        {section.description && (
+                                            <p className="text-[10px] text-white/30 truncate">{section.description}</p>
+                                        )}
+                                    </div>
+                                    <svg className="text-white/20 shrink-0" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <polyline points="9 18 15 12 9 6" />
+                                    </svg>
+                                </button>
+                            ))}
+                            {filteredSections.length === 0 && (
+                                <p className="text-center py-8 text-white/20 text-xs">No sections found</p>
+                            )}
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
             {/* AR UI Overlay */}
             <AnimatePresence>
-                {status === 'running' && targetSection && !isScanningQR && (
+                {status === 'running' && !isScanningQR && !showDestinationPanel && (
                     <>
                         {/* Top Bar */}
                         <motion.div
@@ -372,17 +495,32 @@ function ARPageContent() {
                         >
                             <div className="glass-card px-4 py-2 pointer-events-auto flex items-center gap-3">
                                 <div>
-                                    <p className="text-xs text-white/50">Navigating to</p>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-lg">{targetSection.icon}</span>
-                                        <p className="text-sm font-semibold text-white">
-                                            {targetSection.name}
-                                        </p>
-                                    </div>
+                                    {targetSection ? (
+                                        <>
+                                            <p className="text-xs text-white/50">Navigating to</p>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-lg">{targetSection.icon || '📍'}</span>
+                                                <p className="text-sm font-semibold text-white">
+                                                    {targetSection.name}
+                                                </p>
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <p className="text-xs text-white/50">No destination selected</p>
+                                    )}
                                 </div>
                             </div>
 
                             <div className="flex gap-2 pointer-events-auto">
+                                {/* Destination button */}
+                                <button
+                                    onClick={() => setShowDestinationPanel(true)}
+                                    className="glass-card w-10 h-10 flex items-center justify-center text-white/80 hover:text-white hover:bg-white/10 transition-colors"
+                                    title="Change Destination"
+                                >
+                                    📍
+                                </button>
+
                                 {/* QR Button */}
                                 <button
                                     onClick={startQRScan}
@@ -403,7 +541,7 @@ function ARPageContent() {
                         </motion.div>
 
                         {/* Waypoint/Distance Indicator */}
-                        {navState && (
+                        {navState && targetSection && (
                             <motion.div
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
@@ -412,7 +550,7 @@ function ARPageContent() {
                                 {navState.arrived ? (
                                     <>
                                         <p className="text-2xl font-bold text-[var(--accent)]">
-                                            You've Arrived!
+                                            You&apos;ve Arrived!
                                         </p>
                                         <p className="text-xs text-white/40 mt-1">
                                             {targetSection.name} is here
@@ -424,7 +562,9 @@ function ARPageContent() {
                                             {formatDistance(navState.remainingDistance)}
                                         </p>
                                         <p className="text-xs text-white/40 mt-1 flex items-center justify-center gap-2">
-                                            <span>Follow the path</span>
+                                            <span>
+                                                ~{Math.ceil((navState.remainingDistance / 1.2) / 60)}:{String(Math.round((navState.remainingDistance / 1.2) % 60)).padStart(2, '0')} walk
+                                            </span>
                                             {navState.recalculated && <span className="text-yellow-400">• Rerouting</span>}
                                         </p>
                                         {/* Progress Bar */}
@@ -438,6 +578,22 @@ function ARPageContent() {
                                         </div>
                                     </>
                                 )}
+                            </motion.div>
+                        )}
+
+                        {/* No destination hint */}
+                        {!targetSection && (
+                            <motion.div
+                                initial={{ opacity: 0, y: 20 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50"
+                            >
+                                <button
+                                    onClick={() => setShowDestinationPanel(true)}
+                                    className="glass-card px-6 py-3 text-sm font-medium text-[var(--accent)]"
+                                >
+                                    Tap to select destination
+                                </button>
                             </motion.div>
                         )}
 

@@ -13,6 +13,7 @@ const NODE_COLORS: Record<string, string> = {
   normal: '#00f0ff',
   entrance: '#00ff88',
   section: '#ff8800',
+  qr_anchor: '#ff00ff',
 };
 
 const NODE_RADIUS = 8;

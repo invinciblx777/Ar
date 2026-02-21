@@ -2,6 +2,8 @@ import { supabase } from './supabaseClient';
 
 // ── Types ──────────────────────────────────────────────────────
 
+export type NodeType = 'normal' | 'entrance' | 'section' | 'qr_anchor';
+
 export interface NavigationNode {
     id: string;
     x: number;
@@ -9,7 +11,7 @@ export interface NavigationNode {
     floor_id: string;
     walkable: boolean;
     label: string | null;
-    type?: 'normal' | 'entrance' | 'section';
+    type?: NodeType;
 }
 
 export interface NavigationEdge {
@@ -24,6 +26,8 @@ export interface StoreSection {
     name: string;
     node_id: string;
     icon: string | null;
+    description?: string;
+    category?: string;
 }
 
 export interface Floor {

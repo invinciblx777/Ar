@@ -5,6 +5,7 @@
  * GET /api/admin/stores — list all stores
  * GET /api/admin/stores?id=xxx — get single store
  * GET /api/admin/stores?id=xxx&versions=true — get store + versions
+ * GET /api/admin/stores?versionId=xxx&nodes=true — get nodes for version (QR manager)
  */
 import { createClient } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
@@ -57,6 +58,32 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const storeId = searchParams.get('id');
     const withVersions = searchParams.get('versions') === 'true';
+    const versionId = searchParams.get('versionId');
+    const withNodes = searchParams.get('nodes') === 'true';
+
+    // Nodes for a specific version (used by QR Manager)
+    if (versionId && withNodes) {
+        const { data: floors } = await supabase
+            .from('floors')
+            .select('id')
+            .eq('store_version_id', versionId)
+            .order('level_number')
+            .limit(1);
+
+        const floorId = floors?.[0]?.id || '';
+
+        if (floorId) {
+            const { data: nodes } = await supabase
+                .from('navigation_nodes')
+                .select('id, x, z, label, type')
+                .eq('floor_id', floorId)
+                .order('type');
+
+            return NextResponse.json({ nodes: nodes || [], floorId });
+        }
+
+        return NextResponse.json({ nodes: [], floorId: '' });
+    }
 
     // Single store
     if (storeId) {
