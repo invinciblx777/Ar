@@ -38,13 +38,16 @@ export default function AdminLoginPage() {
       return;
     }
 
-    const { data: profile } = await supabase
-      .from('users')
-      .select('role')
-      .eq('id', user.id)
-      .single();
+    // Check admin role via server-side API (bypasses RLS)
+    const roleRes = await fetch('/api/check-admin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: user.id }),
+    });
 
-    if (!profile || profile.role !== 'admin') {
+    const roleData = await roleRes.json();
+
+    if (!roleData.admin) {
       await supabase.auth.signOut();
       setError('Access denied. Admin role required.');
       setLoading(false);
