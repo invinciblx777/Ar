@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import StoreCard from '@/components/admin/StoreCard';
 import CreateStoreDialog from '@/components/admin/CreateStoreDialog';
 
@@ -19,23 +18,22 @@ export default function DashboardPage() {
     const [stores, setStores] = useState<Store[]>([]);
     const [loading, setLoading] = useState(true);
     const [showCreateDialog, setShowCreateDialog] = useState(false);
-    const supabase = createSupabaseBrowserClient();
     const router = useRouter();
 
     useEffect(() => {
         loadStores();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     async function loadStores() {
         setLoading(true);
-        const { data, error } = await supabase
-            .from('stores')
-            .select('*')
-            .order('created_at', { ascending: false });
-
-        if (!error && data) {
-            setStores(data);
+        try {
+            const res = await fetch('/api/admin/stores');
+            const data = await res.json();
+            if (data.stores) {
+                setStores(data.stores);
+            }
+        } catch (err) {
+            console.error('Failed to fetch stores:', err);
         }
         setLoading(false);
     }

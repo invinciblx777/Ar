@@ -2,13 +2,7 @@
 
 import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
-import { createSupabaseBrowserClient } from '@/lib/supabase/client';
-import {
-    getVersions,
-    publishVersion,
-    cloneVersionAsDraft,
-    type StoreVersion,
-} from '@/lib/versionManager';
+import type { StoreVersion } from '@/lib/versionManager';
 import VersionCard from '@/components/admin/VersionCard';
 
 interface Store {
@@ -33,7 +27,6 @@ export default function StoreDetailPage({
     const [versions, setVersions] = useState<StoreVersion[]>([]);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(false);
-    const supabase = createSupabaseBrowserClient();
     const router = useRouter();
 
     useEffect(() => {
@@ -43,27 +36,36 @@ export default function StoreDetailPage({
 
     async function loadData() {
         setLoading(true);
+        try {
+            const res = await fetch(`/api/admin/stores?id=${storeId}&versions=true`);
+            const data = await res.json();
 
-        const [storeRes, versionsData] = await Promise.all([
-            supabase.from('stores').select('*').eq('id', storeId).single(),
-            getVersions(supabase, storeId),
-        ]);
-
-        if (storeRes.data) setStore(storeRes.data);
-        setVersions(versionsData);
+            if (data.store) setStore(data.store);
+            if (data.versions) setVersions(data.versions);
+        } catch (err) {
+            console.error('Failed to fetch store:', err);
+        }
         setLoading(false);
     }
 
     async function handlePublish(versionId: string) {
         setActionLoading(true);
-        await publishVersion(supabase, versionId, storeId);
+        await fetch('/api/admin/stores', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'publish', versionId, storeId }),
+        });
         await loadData();
         setActionLoading(false);
     }
 
     async function handleRevert(versionId: string) {
         setActionLoading(true);
-        await cloneVersionAsDraft(supabase, versionId, storeId);
+        await fetch('/api/admin/stores', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'clone', versionId, storeId }),
+        });
         await loadData();
         setActionLoading(false);
     }
@@ -76,7 +78,11 @@ export default function StoreDetailPage({
         setActionLoading(true);
         const latestVersion = versions[0];
         if (latestVersion) {
-            await cloneVersionAsDraft(supabase, latestVersion.id, storeId);
+            await fetch('/api/admin/stores', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'clone', versionId: latestVersion.id, storeId }),
+            });
         }
         await loadData();
         setActionLoading(false);

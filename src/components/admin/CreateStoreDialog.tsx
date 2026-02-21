@@ -2,9 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { generateGrid, validateGridConfig, type GridConfig } from '@/lib/gridGenerator';
-import { createInitialVersion, saveGridToFloor } from '@/lib/versionManager';
 
 interface CreateStoreDialogProps {
     onClose: () => void;
@@ -22,8 +20,8 @@ export default function CreateStoreDialog({ onClose, onCreated }: CreateStoreDia
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
     const [showAdvanced, setShowAdvanced] = useState(false);
-    const supabase = createSupabaseBrowserClient();
     const router = useRouter();
+
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
@@ -54,18 +52,14 @@ export default function CreateStoreDialog({ onClose, onCreated }: CreateStoreDia
         }
 
         try {
-            // Get current user
-            const { data: { user } } = await supabase.auth.getUser();
-            if (!user) {
-                setError('Not authenticated');
-                setLoading(false);
-                return;
-            }
+            // Generate grid client-side (pure computation, no DB)
+            const grid = generateGrid(config);
 
-            // 1. Create store
-            const { data: store, error: storeError } = await supabase
-                .from('stores')
-                .insert({
+            // Send everything to the server-side API (bypasses RLS)
+            const res = await fetch('/api/admin/create-store', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
                     name: name.trim(),
                     length_meters: length,
                     width_meters: width,
@@ -73,45 +67,22 @@ export default function CreateStoreDialog({ onClose, onCreated }: CreateStoreDia
                     aisle_width: aisleWidth,
                     corridor_spacing: corridorSpacing,
                     grid_cell_size: cellSize,
-                    created_by: user.id,
-                })
-                .select()
-                .single();
+                    nodes: grid.nodes,
+                    edges: grid.edges,
+                }),
+            });
 
-            if (storeError || !store) {
-                setError(storeError?.message || 'Failed to create store');
+            const data = await res.json();
+
+            if (!res.ok || !data.success) {
+                setError(data.error || 'Failed to create store');
                 setLoading(false);
                 return;
             }
 
-            // 2. Create initial version + floor
-            const vResult = await createInitialVersion(supabase, store.id);
-            if (!vResult.success || !vResult.floorId) {
-                setError(vResult.error || 'Failed to create version');
-                setLoading(false);
-                return;
-            }
-
-            // 3. Generate grid
-            const grid = generateGrid(config);
-
-            // 4. Save grid to floor
-            const saveResult = await saveGridToFloor(
-                supabase,
-                vResult.floorId,
-                grid.nodes,
-                grid.edges
-            );
-
-            if (!saveResult.success) {
-                setError(saveResult.error || 'Failed to save grid');
-                setLoading(false);
-                return;
-            }
-
-            // 5. Navigate to the map builder for this version
+            // Navigate to the new store's detail page
             onCreated();
-            router.push(`/admin/stores/${store.id}`);
+            router.push(`/admin/stores/${data.storeId}`);
         } catch (err) {
             setError(String(err));
             setLoading(false);
